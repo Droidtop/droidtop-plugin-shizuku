@@ -83,3 +83,25 @@ Under Apache 2.0 section 6, specifically:
 * You are **FORBIDDEN** to use `manager/src/main/res/mipmap*/ic_launcher*.png` image files, unless for displaying Shizuku itself.
 
 * You are **FORBIDDEN** to use `Shizuku` as app name or use `moe.shizuku.privileged.api` as application id or declare `moe.shizuku.manager.permission.*` permission.
+
+## This is a private personal fork
+
+This repo mirrors upstream [RikkaApps/Shizuku](https://github.com/RikkaApps/Shizuku)
+for droidtop plugin work (see `PLUGIN-PLAN.md`). Private, personal use only —
+never mention it in public droidtop docs or repos.
+
+Branches:
+- `upstream-main` tracks upstream's `master` exactly (fast-forward only,
+  synced daily by `.github/workflows/sync-upstream.yml`).
+- `main` is where plugin/integration work happens; the sync workflow merges
+  `upstream-main` into it automatically when there's no conflict, and opens
+  an issue here instead of forcing anything when there is one.
+
+### Licence
+
+Shizuku is Apache-2.0 (see `LICENSE`). Apache-2.0 permits private
+modification, use, and even redistribution with attribution and a copy of
+the licence; for a personal, unpublished fork the only real requirement is
+what's already true here — `LICENSE` and NOTICE-equivalent copyright text
+stay intact. No copyleft, no obligation to share changes even if this were
+later distributed.
