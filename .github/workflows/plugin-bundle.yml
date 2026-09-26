@@ -1,0 +1,85 @@
+name: Plugin bundle
+
+# Builds droidtop-plugin/build.sh's payload (Droidtop/droidtop docs/SPEC.md
+# 12a) the same way Droidtop/droidtop's own "sample-plugin" CI job builds
+# samples/plugin-sample-statustile: a real Gradle build of :plugin-host
+# for the classpath, then kotlinc + d8, producing build/manifest.json +
+# build/classes.jar and uploading them UNSIGNED. This job never sees the
+# plugin origin's private key (droidtop-dev only,
+# /root/coordination/keys/droidtop-plugins/) -- signing (sign.sh) always
+# happens outside CI.
+#
+# Unlike the droidtop-side sample, this repo has no droidtop checkout of
+# its own to build :plugin-host from, so this job checks out
+# Droidtop/droidtop (public) into ./droidtop alongside this repo's own
+# checkout and builds :plugin-host there.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'droidtop-plugin/**'
+      - '.github/workflows/plugin-bundle.yml'
+  workflow_dispatch: {}
+
+jobs:
+  plugin-bundle:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout this repo's plugin source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout Droidtop/droidtop for the :plugin-host classpath
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Droidtop/droidtop
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+          path: droidtop
+
+      - name: Set up the Android build
+        uses: ./droidtop/.github/actions/android-setup
+
+      - name: Build :plugin-host
+        working-directory: droidtop
+        run: ./gradlew :plugin-host:assembleDebug --stacktrace
+
+      - name: Extract the :plugin-host classpath
+        run: |
+          mkdir -p "$RUNNER_TEMP/plugin-host-classes"
+          unzip -q -o droidtop/plugin-host/build/outputs/aar/plugin-host-debug.aar classes.jar -d "$RUNNER_TEMP/plugin-host-classes"
+          echo "PLUGIN_HOST_CLASSPATH=$RUNNER_TEMP/plugin-host-classes/classes.jar" >> "$GITHUB_ENV"
+
+      - name: Install kotlinc
+        # Pinned to Droidtop/droidtop's own gradle/libs.versions.toml
+        # "kotlin" entry so this bundle compiles against the same
+        # language version :plugin-host itself does.
+        run: |
+          KOTLIN_VERSION=$(grep '^kotlin = ' droidtop/gradle/libs.versions.toml | cut -d '"' -f2)
+          echo "Using kotlinc $KOTLIN_VERSION"
+          curl -sL "https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip" -o "$RUNNER_TEMP/kotlinc.zip"
+          unzip -q "$RUNNER_TEMP/kotlinc.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
+
+      - name: Build the plugin payload (unsigned)
+        env:
+          ANDROID_JAR: ${{ env.ANDROID_SDK_ROOT }}/platforms/android-36/android.jar
+        run: |
+          export PATH="$ANDROID_SDK_ROOT/build-tools/36.0.0:$PATH"
+          cd droidtop-plugin
+          ./build.sh
+
+      - name: Upload unsigned plugin payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: plugin-bundle-unsigned
+          path: |
+            droidtop-plugin/build/classes.jar
+            droidtop-plugin/build/manifest.json
+          if-no-files-found: error

@@ -1,0 +1,13 @@
+{
+  "id": "droidtop.shizuku-bridge",
+  "origin": "droidtop",
+  "label": "Shizuku",
+  "description": "Status tile and actions for Shizuku, the ADB/root-pairing helper other plugins can use for privileged calls without full root.",
+  "version": "1.0.0",
+  "kind": "native_bundle",
+  "capabilities": ["status_tile", "app_status"],
+  "contractVersion": 1,
+  "requestsRoot": false,
+  "abis": [],
+  "entryClass": "dev.droidtop.plugins.shizuku.ShizukuPlugin"
+}
