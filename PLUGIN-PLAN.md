@@ -1,6 +1,6 @@
 # Shizuku as a droidtop dependency
 
-Private plan. Upstream: https://github.com/RikkaApps/Shizuku (Apache-2.0).
+Plan for using Shizuku as a droidtop dependency. Upstream: https://github.com/RikkaApps/Shizuku (Apache-2.0).
 Not a content or game source -- Shizuku is infrastructure: it starts a
 privileged server (via ADB pairing or root) and hands its binder to apps
 that ask, so they can call system APIs without holding root themselves.
@@ -19,7 +19,7 @@ its own, no settings row. Its contribution is enabling *other* plugins:
 ReVanced Manager's install path and MMRL's module actions both want
 privileged access without demanding root outright, and Shizuku is exactly
 droidtop's "root optional" story made concrete -- see both of those repos'
-`PLUGIN-PLAN.md`. This repo is a private tracked mirror so the version
+`PLUGIN-PLAN.md`. This repo is a tracked mirror so the version
 droidtop's plugins build against is pinned and known, not because Shizuku
 itself becomes a droidtop-visible plugin.
 

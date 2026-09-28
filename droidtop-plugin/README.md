@@ -17,7 +17,7 @@ screen like any other plugin bundle.
   origin key as droidtop's own sample plugin, since droidtop's public
   repo only pins that one origin today (see
   `Droidtop/droidtop`'s `PluginOriginKeys`) -- there is no separate
-  "shizuku" origin pinned anywhere, by design (this repo is private).
+  "shizuku" origin pinned anywhere, by design.
 - `build.sh` -- compiles, dexes and hashes: produces `build/classes.jar`
   and `build/manifest.json`. Touches no private key, so it runs in CI
   (`.github/workflows/plugin-bundle.yml`, which checks out

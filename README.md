@@ -84,11 +84,12 @@ Under Apache 2.0 section 6, specifically:
 
 * You are **FORBIDDEN** to use `Shizuku` as app name or use `moe.shizuku.privileged.api` as application id or declare `moe.shizuku.manager.permission.*` permission.
 
-## This is a private personal fork
+## Fork status
 
 This repo mirrors upstream [RikkaApps/Shizuku](https://github.com/RikkaApps/Shizuku)
-for droidtop plugin work (see `PLUGIN-PLAN.md`). Private, personal use only —
-never mention it in public droidtop docs or repos.
+for droidtop plugin work (see `PLUGIN-PLAN.md`). It is an official droidtop
+plugin fork, kept in sync with upstream, not a place for droidtop's own
+patches beyond the `droidtop-plugin/` wrapper.
 
 Branches:
 - `upstream-main` tracks upstream's `master` exactly (fast-forward only,
@@ -99,9 +100,8 @@ Branches:
 
 ### Licence
 
-Shizuku is Apache-2.0 (see `LICENSE`). Apache-2.0 permits private
-modification, use, and even redistribution with attribution and a copy of
-the licence; for a personal, unpublished fork the only real requirement is
-what's already true here — `LICENSE` and NOTICE-equivalent copyright text
-stay intact. No copyleft, no obligation to share changes even if this were
-later distributed.
+Shizuku is Apache-2.0 (see `LICENSE`). Apache-2.0 permits modification,
+use, and redistribution with attribution and a copy of the licence; the only
+real requirement here is what's already true — `LICENSE` and
+NOTICE-equivalent copyright text stay intact. No copyleft, no obligation to
+share changes.
