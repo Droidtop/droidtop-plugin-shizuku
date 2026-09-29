@@ -20,6 +20,9 @@
 #   - PLUGIN_HOST_CLASSPATH pointing at a compiled :plugin-host classes.jar
 #     (from Droidtop/droidtop, e.g. its plugin-host-debug.aar's classes.jar)
 #   - ANDROID_JAR pointing at android.jar for :plugin-host's compileSdk
+#   - SHIZUKU_CLASSPATH: Shizuku's client jars (api, aidl and shared, dev.rikka.shizuku 13.x,
+#     colon-separated), for compiling only. The plugin never bundles them: droidtop's
+#     :plugin-host carries the same library and the plugin's class loader delegates to it.
 #
 # Optionally, for a one-shot local build+sign (droidtop-dev only): also set
 # PLUGIN_SIGNING_KEY and this script calls sign.sh itself at the end.
@@ -29,13 +32,18 @@ cd "$(dirname "$0")"
 
 : "${PLUGIN_HOST_CLASSPATH:?set to a jar/dir containing dev.droidtop.pluginhost.* compiled classes}"
 : "${ANDROID_JAR:?set ANDROID_JAR to android.jar for the target compileSdk}"
+: "${SHIZUKU_CLASSPATH:?set SHIZUKU_CLASSPATH to the Shizuku api, aidl and shared jars, colon-separated}"
 
 rm -rf build
 mkdir -p build/classes
 
-kotlinc -cp "$PLUGIN_HOST_CLASSPATH" -d build/classes src/dev/droidtop/plugins/shizuku/ShizukuPlugin.kt
+kotlinc -cp "$PLUGIN_HOST_CLASSPATH:$SHIZUKU_CLASSPATH:$ANDROID_JAR" -d build/classes src/dev/droidtop/plugins/shizuku/ShizukuPlugin.kt
 
-d8 --output build --lib "$ANDROID_JAR" \
+# The host's and Shizuku's classes are only on the classpath so d8 can desugar against them; they are not in the output.
+CLASSPATH_ARGS=()
+IFS=':' read -ra CP_ITEMS <<< "$PLUGIN_HOST_CLASSPATH:$SHIZUKU_CLASSPATH"
+for item in "${CP_ITEMS[@]}"; do CLASSPATH_ARGS+=(--classpath "$item"); done
+d8 --output build --lib "$ANDROID_JAR" "${CLASSPATH_ARGS[@]}" \
   $(find build/classes -name '*.class')
 
 # classes.jar is a zip containing classes.dex at its root -- what

@@ -60,6 +60,21 @@ jobs:
           unzip -q -o plugin-host/build/outputs/aar/plugin-host-debug.aar classes.jar -d "$RUNNER_TEMP/plugin-host-classes"
           echo "PLUGIN_HOST_CLASSPATH=$RUNNER_TEMP/plugin-host-classes/classes.jar" >> "$GITHUB_ENV"
 
+      - name: Fetch Shizuku's client library (compile classpath only)
+        # Pinned to the version Droidtop/droidtop's :plugin-host carries (its gradle/libs.versions.toml
+        # "shizuku" entry): the plugin compiles against these jars and never bundles them.
+        run: |
+          SHIZUKU_VERSION=$(grep '^shizuku = ' gradle/libs.versions.toml | cut -d '"' -f2)
+          echo "Using Shizuku client $SHIZUKU_VERSION"
+          mkdir -p "$RUNNER_TEMP/shizuku"
+          JARS=""
+          for module in api aidl shared; do
+            curl -sfL "https://repo1.maven.org/maven2/dev/rikka/shizuku/${module}/${SHIZUKU_VERSION}/${module}-${SHIZUKU_VERSION}.aar" -o "$RUNNER_TEMP/shizuku/${module}.aar"
+            unzip -q -o "$RUNNER_TEMP/shizuku/${module}.aar" classes.jar -d "$RUNNER_TEMP/shizuku/${module}"
+            JARS="${JARS:+$JARS:}$RUNNER_TEMP/shizuku/${module}/classes.jar"
+          done
+          echo "SHIZUKU_CLASSPATH=$JARS" >> "$GITHUB_ENV"
+
       - name: Install kotlinc
         # Pinned to Droidtop/droidtop's own gradle/libs.versions.toml
         # "kotlin" entry so this bundle compiles against the same
