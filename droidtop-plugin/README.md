@@ -57,8 +57,9 @@ copy that holds the binder; the plugin bundles no Shizuku classes. Shizuku
 - `sign.sh` -- the only script here that touches the real droidtop plugin origin
   key (`/root/coordination/keys/droidtop-plugins/droidtop-origin-private.pem`);
   signs `build/manifest.json` and packages
-  `droidtop.shizuku-bridge.droidplugin.tar.xz`. Run on droidtop-dev only; never in
-  CI, never committed to this repo.
+  `droidtop.shizuku-bridge.droidplugin.tar.xz`. CI runs it with the `PLUGIN_SIGNING_KEY` repo secret
+  (optional `PLUGIN_SIGNING_CERT` becomes `origin.cert`); locally run it on
+  droidtop-dev. The key is never committed to this repo.
 
 ## Trying it
 
