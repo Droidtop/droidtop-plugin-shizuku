@@ -1,28 +1,10 @@
 name: Plugin bundle
 
-# Builds droidtop-plugin/build.sh's payload (Droidtop/droidtop docs/SPEC.md
-# 12a) the same way Droidtop/droidtop's own "sample-plugin" CI job builds
-# samples/plugin-sample-statustile: a real Gradle build of :plugin-host
-# for the classpath, then kotlinc + d8, producing build/manifest.json +
-# build/classes.jar and signing and uploading them (see the signing step).
-# When the repo secret PLUGIN_SIGNING_KEY (this plugin's origin EC private key
-# PEM; optionally PLUGIN_SIGNING_CERT, its certificate, packaged as origin.cert)
-# is available, the job signs the bundle with sign.sh and uploads the signed
-# .droidplugin.tar.xz. The key is written to a 600 temp file inside the job and
-# deleted in an always() step. Without the secret (forks, pull requests) it
-# uploads the payload unsigned and says so in the job summary; it never fails
-# for that. A tag named plugin-v* attaches the signed bundle to that release.
-#
-# Unlike the droidtop-side sample, this repo has no droidtop checkout of
-# its own to build :plugin-host from, so this job checks out
-# Droidtop/droidtop (public) at the workspace ROOT -- android-setup's own
-# vendor-deps step (build-scripts/build-vendor-deps.sh) is a relative
-# path assuming it runs from a droidtop checkout at $GITHUB_WORKSPACE,
-# confirmed by a real run here (a checkout-into-a-subdirectory layout
-# failed with "build-scripts/build-vendor-deps.sh: No such file or
-# directory") -- and checks this repo's own plugin source into a
-# subdirectory instead.
-
+# Build, signing and the tag release live once, in Droidtop/droidtop-platforms,
+# pinned by commit (Droidtop/tracker#198). The build job never holds the signing
+# key; the sign job runs this repository's sign.sh with PLUGIN_SIGNING_KEY and,
+# when present, PLUGIN_SIGNING_CERT. A tag named plugin-v* attaches the signed
+# bundle to that release.
 on:
   push:
     branches: [main]
@@ -32,142 +14,18 @@ on:
       - '.github/workflows/plugin-bundle.yml'
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
-  plugin-bundle:
-    runs-on: ubuntu-24.04
-    outputs:
-      signed: ${{ steps.sign.outputs.signed }}
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout Droidtop/droidtop for the :plugin-host classpath
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Droidtop/droidtop
-          submodules: recursive
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Checkout this repo's plugin source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          path: plugin-repo
-
-      - name: Set up the Android build
-        uses: ./.github/actions/android-setup
-
-      - name: Build :plugin-host
-        run: ./gradlew :plugin-host:assembleDebug --stacktrace
-
-      - name: Extract the :plugin-host classpath
-        run: |
-          mkdir -p "$RUNNER_TEMP/plugin-host-classes"
-          unzip -q -o plugin-host/build/outputs/aar/plugin-host-debug.aar classes.jar -d "$RUNNER_TEMP/plugin-host-classes"
-          echo "PLUGIN_HOST_CLASSPATH=$RUNNER_TEMP/plugin-host-classes/classes.jar" >> "$GITHUB_ENV"
-
-      - name: Fetch Shizuku's client library (compile classpath only)
-        # Pinned to the version Droidtop/droidtop's :plugin-host carries (its gradle/libs.versions.toml
-        # "shizuku" entry): the plugin compiles against these jars and never bundles them.
-        run: |
-          SHIZUKU_VERSION=$(grep '^shizuku = ' gradle/libs.versions.toml | cut -d '"' -f2)
-          echo "Using Shizuku client $SHIZUKU_VERSION"
-          mkdir -p "$RUNNER_TEMP/shizuku"
-          JARS=""
-          for module in api aidl shared; do
-            curl -sfL "https://repo1.maven.org/maven2/dev/rikka/shizuku/${module}/${SHIZUKU_VERSION}/${module}-${SHIZUKU_VERSION}.aar" -o "$RUNNER_TEMP/shizuku/${module}.aar"
-            unzip -q -o "$RUNNER_TEMP/shizuku/${module}.aar" classes.jar -d "$RUNNER_TEMP/shizuku/${module}"
-            JARS="${JARS:+$JARS:}$RUNNER_TEMP/shizuku/${module}/classes.jar"
-          done
-          echo "SHIZUKU_CLASSPATH=$JARS" >> "$GITHUB_ENV"
-
-      - name: Install kotlinc
-        # Pinned to Droidtop/droidtop's own gradle/libs.versions.toml
-        # "kotlin" entry so this bundle compiles against the same
-        # language version :plugin-host itself does.
-        run: |
-          KOTLIN_VERSION=$(grep '^kotlin = ' gradle/libs.versions.toml | cut -d '"' -f2)
-          echo "Using kotlinc $KOTLIN_VERSION"
-          curl -sL "https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip" -o "$RUNNER_TEMP/kotlinc.zip"
-          unzip -q "$RUNNER_TEMP/kotlinc.zip" -d "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
-
-      - name: Build the plugin payload
-        env:
-          ANDROID_JAR: ${{ env.ANDROID_SDK_ROOT }}/platforms/android-36/android.jar
-        run: |
-          export PATH="$ANDROID_SDK_ROOT/build-tools/36.0.0:$PATH"
-          cd plugin-repo/droidtop-plugin
-          ./build.sh
-
-      - name: Sign the bundle
-        id: sign
-        working-directory: plugin-repo/droidtop-plugin
-        env:
-          SIGNING_KEY_PEM: ${{ secrets.PLUGIN_SIGNING_KEY }}
-          SIGNING_CERT: ${{ secrets.PLUGIN_SIGNING_CERT }}
-        run: |
-          set -eu
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] || [ -z "$SIGNING_KEY_PEM" ]; then
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            echo "Unsigned bundle: signing is skipped on pull requests and whenever the PLUGIN_SIGNING_KEY secret is absent (forks). The payload is uploaded unsigned." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          umask 077
-          printf '%s' "$SIGNING_KEY_PEM" > "$RUNNER_TEMP/k.pem"
-          export PLUGIN_SIGNING_KEY="$RUNNER_TEMP/k.pem"
-          if [ -n "$SIGNING_CERT" ]; then
-            printf '%s' "$SIGNING_CERT" > "$RUNNER_TEMP/origin.cert"
-            export PLUGIN_SIGNING_CERT="$RUNNER_TEMP/origin.cert"
-          fi
-          ./sign.sh
-          echo "signed=true" >> "$GITHUB_OUTPUT"
-          {
-            echo "Signed bundle: $(ls ./*.droidplugin.tar.xz)"
-            if [ -n "$SIGNING_CERT" ]; then echo "origin.cert included."; else echo "No PLUGIN_SIGNING_CERT secret: no origin.cert in the bundle."; fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Remove the signing material
-        if: always()
-        run: rm -f -- "${RUNNER_TEMP:?}/k.pem" "${RUNNER_TEMP:?}/origin.cert"
-
-      - name: Upload signed plugin bundle
-        if: steps.sign.outputs.signed == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: plugin-bundle
-          path: plugin-repo/droidtop-plugin/*.droidplugin.tar.xz
-          if-no-files-found: error
-
-      - name: Upload unsigned plugin payload (only when signing was skipped)
-        if: steps.sign.outputs.signed != 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: plugin-bundle-unsigned
-          path: |
-            plugin-repo/droidtop-plugin/build/classes.jar
-            plugin-repo/droidtop-plugin/build/manifest.json
-          if-no-files-found: error
-
-  release:
-    needs: plugin-bundle
-    if: needs.plugin-bundle.outputs.signed == 'true' && startsWith(github.ref, 'refs/tags/plugin-v')
-    runs-on: ubuntu-24.04
+  bundle:
     permissions:
       contents: write
-    steps:
-      - name: Download the signed bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: plugin-bundle
-          path: bundle
-
-      - name: Attach it to the release for this tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -eu
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" bundle/*.droidplugin.tar.xz --clobber
+    uses: Droidtop/droidtop-platforms/.github/workflows/droidtop-plugin-bundle.yml@c1807d73da2f4f592907f68a9aacb445c600e4bd
+    with:
+      plugin-dir: droidtop-plugin
+      artifact-name: plugin-bundle
+      prepare-script: prepare.sh
+    secrets:
+      PLUGIN_SIGNING_KEY: ${{ secrets.PLUGIN_SIGNING_KEY }}
+      PLUGIN_SIGNING_CERT: ${{ secrets.PLUGIN_SIGNING_CERT }}
