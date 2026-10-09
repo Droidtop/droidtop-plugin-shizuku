@@ -32,7 +32,11 @@
       "version": "1.0",
       "attributes": { "level": "adb" },
       "ops": [
-        { "op": "exec", "permission": "priv.shell.adb", "job": false }
+        { "op": "exec", "permission": "priv.shell.adb", "job": false },
+        { "op": "exec_stream", "permission": "priv.shell.adb", "job": false },
+        { "op": "stream_read", "permission": "priv.shell.adb", "job": false },
+        { "op": "stream_write", "permission": "priv.shell.adb", "job": false },
+        { "op": "stream_kill", "permission": "priv.shell.adb", "job": false }
       ]
     },
     {
@@ -40,7 +44,11 @@
       "version": "1.0",
       "attributes": { "level": "root" },
       "ops": [
-        { "op": "exec", "permission": "priv.shell.root", "job": false }
+        { "op": "exec", "permission": "priv.shell.root", "job": false },
+        { "op": "exec_stream", "permission": "priv.shell.root", "job": false },
+        { "op": "stream_read", "permission": "priv.shell.root", "job": false },
+        { "op": "stream_write", "permission": "priv.shell.root", "job": false },
+        { "op": "stream_kill", "permission": "priv.shell.root", "job": false }
       ]
     }
   ]

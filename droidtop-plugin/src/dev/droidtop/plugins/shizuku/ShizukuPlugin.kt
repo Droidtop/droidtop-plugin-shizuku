@@ -105,6 +105,10 @@ class ShizukuPlugin : DroidtopPlugin {
         }
         "api:priv.shell" -> when (call.op) {
             "exec" -> exec(call)
+            "exec_stream" -> execStream(call)
+            "stream_read" -> streamRead(call)
+            "stream_write" -> streamWrite(call)
+            "stream_kill" -> streamKill(call)
             else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "priv.shell has no op ${call.op}")
         }
         else -> LegacyHandle.translate(this, call)
@@ -159,19 +163,165 @@ class ShizukuPlugin : DroidtopPlugin {
      * no way to drop to the shell user without `su`, so running it would give that caller root it was never allowed.
      */
     private fun levelRefusal(call: PluginCall): PluginReply? {
+        // The level of the export that served the call (docs/plugin-api.md 2.7); an older droidtop sends only the grant.
         val grants = call.caller.optJSONArray("grants")
-        val wantsRoot = grants != null && (0 until grants.length()).any { grants.optString(it) == "priv.shell.root" }
+        val wantsRoot = call.caller.optString("level").let { level ->
+            if (level.isNotBlank()) level == LEVEL_ROOT else grants != null && (0 until grants.length()).any { grants.optString(it) == "priv.shell.root" }
+        }
+        // droidtop's own calls (the task list, the person's own rooted desktop) are not a plugin's grant: they may run as
+        // whatever user Shizuku runs as, as long as they get at least the level they asked for.
+        val fromDroidtop = call.caller.optString("kind") == "host"
         val level = reportLevel()
         return when {
             wantsRoot && level != LEVEL_ROOT ->
                 PluginReply.error(PluginErrorCode.PROVIDER_UNAVAILABLE, "Shizuku is not running as root, so it cannot run commands as root.")
-            !wantsRoot && level == LEVEL_ROOT ->
+            !wantsRoot && level == LEVEL_ROOT && !fromDroidtop ->
                 PluginReply.error(
                     PluginErrorCode.PERMISSION_DENIED,
                     "Shizuku is running as root, and this plugin is only allowed to run commands as the system (adb). Allow it \"Run commands as root\" if you trust it.",
                 )
             else -> null
         }
+    }
+
+    // ---- stream sessions (docs/plugin-api.md 2.7) --------------------------
+
+    /** One running command: its process and a drain per output stream. Keyed by its caller and the caller's token. */
+    private class Session(val process: Process) {
+        val out = Drain(process.inputStream).also { it.start() }
+        val err = Drain(process.errorStream).also { it.start() }
+    }
+
+    /**
+     * Reads one stream on its own thread into a buffer of at most [MAX_UNREAD_BYTES]; when the caller does not read, it
+     * stops reading too, so the command blocks as it would on a full pipe.
+     */
+    private class Drain(private val stream: InputStream) : Thread() {
+        private val lock = Object()
+        private val buffer = java.io.ByteArrayOutputStream()
+        @Volatile var eof = false
+            private set
+
+        init {
+            isDaemon = true
+        }
+
+        override fun run() {
+            val chunk = ByteArray(8192)
+            try {
+                while (true) {
+                    val n = stream.read(chunk)
+                    if (n < 0) break
+                    synchronized(lock) {
+                        while (buffer.size() >= MAX_UNREAD_BYTES) lock.wait()
+                        buffer.write(chunk, 0, n)
+                    }
+                }
+            } catch (_: Exception) {
+                // The process ended or was killed: what was read is still handed out.
+            } finally {
+                eof = true
+            }
+        }
+
+        fun hasData(): Boolean = synchronized(lock) { buffer.size() > 0 }
+
+        /** Up to [max] bytes, removed from the buffer. */
+        fun take(max: Int): ByteArray = synchronized(lock) {
+            val all = buffer.toByteArray()
+            val n = minOf(max, all.size)
+            buffer.reset()
+            buffer.write(all, n, all.size - n)
+            lock.notifyAll()
+            all.copyOf(n)
+        }
+    }
+
+    private val sessions = java.util.concurrent.ConcurrentHashMap<String, Session>()
+
+    /** Whose session this is: droidtop itself, or the calling plugin. Another caller's token never finds it. */
+    private fun sessionKey(call: PluginCall): String? {
+        val token = call.args.optString("session")
+        if (!SESSION_TOKEN.matches(token)) return null
+        val owner = if (call.caller.optString("kind") == "host") "droidtop" else call.caller.optString("id").ifBlank { return null }
+        return "$owner/$token"
+    }
+
+    private fun execStream(call: PluginCall): PluginReply {
+        val key = sessionKey(call) ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "session must be a token of 8 to 64 letters, digits or dashes")
+        val array = call.args.optJSONArray("argv")
+        val argv = if (array == null) emptyList() else List(array.length()) { array.optString(it) }
+        if (argv.isEmpty() || argv.size > MAX_ARGS || argv.any { it.isEmpty() || it.length > MAX_ARG_LENGTH }) {
+            return PluginReply.error(PluginErrorCode.INVALID_ARGS, "argv must list 1 to $MAX_ARGS non-empty arguments")
+        }
+        notReady()?.let { return it }
+        levelRefusal(call)?.let { return it }
+        if (sessions.containsKey(key)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "that session is already running")
+        val owner = key.substringBefore('/')
+        if (sessions.keys.count { it.startsWith("$owner/") } >= MAX_SESSIONS) {
+            return PluginReply.error(PluginErrorCode.RATE_LIMITED, "at most $MAX_SESSIONS commands may run at once")
+        }
+        val process = runCatching { newProcess(argv) }.getOrElse {
+            return PluginReply.error(PluginErrorCode.FAILED, "Shizuku could not start the command: ${it.message}")
+        }
+        sessions[key] = Session(process)
+        return PluginReply.ok(JSONObject().put("session", call.args.optString("session")))
+    }
+
+    private fun streamRead(call: PluginCall): PluginReply {
+        val key = sessionKey(call) ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "session is required")
+        val session = sessions[key] ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "no such session")
+        val waitMs = call.args.optLong("waitMs", 0L).coerceIn(0L, minOf(MAX_READ_WAIT_MS, budget(call)))
+        val max = call.args.optInt("maxBytes", MAX_READ_BYTES).coerceIn(1, MAX_READ_BYTES)
+        val until = System.currentTimeMillis() + waitMs
+        while (!session.out.hasData() && !session.err.hasData() && !(session.out.eof && session.err.eof) && System.currentTimeMillis() < until) {
+            Thread.sleep(READ_POLL_MS)
+        }
+        val stdout = session.out.take(max)
+        val stderr = session.err.take(max - stdout.size)
+        val out = JSONObject()
+            .put("stdout", java.util.Base64.getEncoder().encodeToString(stdout))
+            .put("stderr", java.util.Base64.getEncoder().encodeToString(stderr))
+        val drained = session.out.eof && session.err.eof && !session.out.hasData() && !session.err.hasData()
+        if (drained && session.process.waitFor(EXIT_WAIT_MS, TimeUnit.MILLISECONDS)) {
+            sessions.remove(key)
+            out.put("exited", true).put("exit", session.process.exitValue())
+        } else {
+            out.put("exited", false)
+        }
+        return PluginReply.ok(out)
+    }
+
+    private fun streamWrite(call: PluginCall): PluginReply {
+        val key = sessionKey(call) ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "session is required")
+        val session = sessions[key] ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "no such session")
+        val data = runCatching { java.util.Base64.getDecoder().decode(call.args.optString("data")) }.getOrElse {
+            return PluginReply.error(PluginErrorCode.INVALID_ARGS, "data must be base64")
+        }
+        if (data.size > MAX_WRITE_BYTES) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "data is limited to $MAX_WRITE_BYTES bytes per call")
+        return try {
+            val stdin = session.process.outputStream
+            if (data.isNotEmpty()) {
+                stdin.write(data)
+                stdin.flush()
+            }
+            if (call.args.optBoolean("close")) stdin.close()
+            PluginReply.ok(JSONObject().put("written", data.size))
+        } catch (e: java.io.IOException) {
+            PluginReply.error(PluginErrorCode.FAILED, "the command no longer takes input: ${e.message}")
+        }
+    }
+
+    private fun streamKill(call: PluginCall): PluginReply {
+        val key = sessionKey(call) ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "session is required")
+        val session = sessions.remove(key) ?: return PluginReply.ok(JSONObject().put("killed", false))
+        runCatching { session.process.destroy() }
+        return PluginReply.ok(JSONObject().put("killed", true))
+    }
+
+    override fun onUnload() {
+        sessions.values.forEach { runCatching { it.process.destroy() } }
+        sessions.clear()
     }
 
     /** The time this call may take: the deadline droidtop gave it, less a margin to answer in. */
@@ -184,9 +334,7 @@ class ShizukuPlugin : DroidtopPlugin {
      * `Shizuku.newProcess` is private since Shizuku 13, so it is reached by reflection, the same way other apps do.
      */
     private fun run(argv: List<String>, timeoutMs: Long): Outcome? {
-        val method = Shizuku::class.java.getDeclaredMethod("newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
-        method.isAccessible = true
-        val process = method.invoke(null, argv.toTypedArray(), null, null) as Process
+        val process = newProcess(argv)
         val out = Capture(process.inputStream)
         val err = Capture(process.errorStream)
         out.start()
@@ -203,6 +351,13 @@ class ShizukuPlugin : DroidtopPlugin {
         } finally {
             runCatching { process.destroy() }
         }
+    }
+
+    /** Starts [argv] in Shizuku's server, directly. `Shizuku.newProcess` is private since Shizuku 13: reached by reflection. */
+    private fun newProcess(argv: List<String>): Process {
+        val method = Shizuku::class.java.getDeclaredMethod("newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
+        method.isAccessible = true
+        return method.invoke(null, argv.toTypedArray(), null, null) as Process
     }
 
     /** Reads one stream on its own thread so a full pipe never stalls the command, keeping the first [MAX_STREAM_CHARS] characters. */
@@ -287,6 +442,15 @@ class ShizukuPlugin : DroidtopPlugin {
         const val ACTION_OPEN_SETUP = "open_setup"
         const val ACTION_GRANT = "grant"
         private const val REQUEST_CODE = 1
+
+        private const val MAX_SESSIONS = 8
+        private const val MAX_UNREAD_BYTES = 1024 * 1024
+        private const val MAX_READ_BYTES = 64 * 1024
+        private const val MAX_WRITE_BYTES = 64 * 1024
+        private const val MAX_READ_WAIT_MS = 5_000L
+        private const val READ_POLL_MS = 25L
+        private const val EXIT_WAIT_MS = 200L
+        private val SESSION_TOKEN = Regex("^[A-Za-z0-9-]{8,64}\$")
 
         private const val ROOT_UID = 0
         private const val LEVEL_NONE = "none"
