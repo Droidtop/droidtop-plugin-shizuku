@@ -23,13 +23,19 @@ import rikka.shizuku.Shizuku
  * Two jobs:
  *
  * - **Provider.** It exports two standard interfaces, each running one
- *   command through Shizuku's server as the ADB shell user:
+ *   command through Shizuku's server:
  *   `priv.packages@1` (`force_stop {package}`, which is what lets Quit to
  *   Library end another app's game where Android 13 gives droidtop no way to)
- *   and `priv.shell@1` (`exec {argv}`). droidtop's broker has already checked
- *   the caller's own grant for the op's permission before `handle` is
- *   called, so this class applies only what the broker cannot know: is Shizuku
- *   running, and is droidtop allowed in it.
+ *   and `priv.shell@1` (`exec {argv}`), the latter at two levels, each its own
+ *   grant: "adb" (Shizuku's server runs as the ADB shell user) and "root"
+ *   (Shizuku's server runs as uid 0: started as root, or Sui). droidtop's
+ *   broker has already checked the caller's own grant for the op's permission
+ *   (`priv.shell.adb` or `priv.shell.root`, carried in `caller.grants`) before
+ *   `handle` is called, so this class applies only what the broker cannot
+ *   know: is Shizuku running, is droidtop allowed in it, and as which user
+ *   its server runs. It reports that last one to droidtop
+ *   (`plugins.report_level`), which offers the root export only while it is
+ *   "root" (docs/plugin-api.md 2.7). droidtop itself never runs `su`.
  * - **The surface for Shizuku itself.** A status tile and an app_status page,
  *   as before: is it installed, running and allowed, and a way to open
  *   Shizuku's own pairing screen or ask it to allow droidtop.
@@ -51,6 +57,38 @@ class ShizukuPlugin : DroidtopPlugin {
 
     override fun onLoad(context: PluginContext) {
         this.context = context
+        // Off the load: the first report is a broker round trip and Shizuku may not have sent its binder yet.
+        Thread({ reportLevel() }, "shizuku-level").apply { isDaemon = true }.start()
+    }
+
+    // ---- the level Shizuku's server runs at ------------------------------
+
+    /** The last level droidtop accepted, so an unchanged level is not re-sent on every call. */
+    @Volatile private var reported: String? = null
+
+    /** "root" while Shizuku's server is uid 0, "adb" while it is the shell user, "none" while it cannot be used. */
+    private fun serverLevel(): String = runCatching {
+        if (!Shizuku.pingBinder() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+            LEVEL_NONE
+        } else if (Shizuku.getUid() == ROOT_UID) {
+            LEVEL_ROOT
+        } else {
+            LEVEL_ADB
+        }
+    }.getOrDefault(LEVEL_NONE)
+
+    /**
+     * Tells droidtop which level the `priv.shell` root export may be offered at right now. An older droidtop without
+     * `plugins.report_level` refuses it, and then the root export is simply never offered there.
+     */
+    private fun reportLevel(level: String = serverLevel()): String {
+        if (level != reported) {
+            val ok = runCatching {
+                JSONObject(context.call("plugins", 1, "report_level", JSONObject().put("api", "priv.shell").put("level", level).toString())).optBoolean("ok")
+            }.getOrDefault(false)
+            if (ok) reported = level
+        }
+        return level
     }
 
     override fun invoke(capability: PluginCapability, args: PluginArgs): PluginResult = when (capability) {
@@ -107,10 +145,33 @@ class ShizukuPlugin : DroidtopPlugin {
             return PluginReply.error(PluginErrorCode.INVALID_ARGS, "argv must list 1 to $MAX_ARGS non-empty arguments")
         }
         notReady()?.let { return it }
+        levelRefusal(call)?.let { return it }
         val wanted = call.args.optLong("timeoutMs", DEFAULT_EXEC_TIMEOUT_MS).coerceIn(500L, MAX_EXEC_TIMEOUT_MS)
         val outcome = run(argv, minOf(wanted, budget(call)))
             ?: return PluginReply.error(PluginErrorCode.TIMEOUT, "the command did not finish in time")
         return PluginReply.ok(JSONObject().put("exit", outcome.exit).put("stdout", outcome.stdout).put("stderr", outcome.stderr))
+    }
+
+    /**
+     * Null when this exec may run at the level Shizuku's server runs at, else why not. A caller allowed root
+     * (`priv.shell.root`) is served only while the server is uid 0. A caller allowed only the system level
+     * (`priv.shell.adb`) is NOT served while the server is root: Shizuku runs every command as its own user and there is
+     * no way to drop to the shell user without `su`, so running it would give that caller root it was never allowed.
+     */
+    private fun levelRefusal(call: PluginCall): PluginReply? {
+        val grants = call.caller.optJSONArray("grants")
+        val wantsRoot = grants != null && (0 until grants.length()).any { grants.optString(it) == "priv.shell.root" }
+        val level = reportLevel()
+        return when {
+            wantsRoot && level != LEVEL_ROOT ->
+                PluginReply.error(PluginErrorCode.PROVIDER_UNAVAILABLE, "Shizuku is not running as root, so it cannot run commands as root.")
+            !wantsRoot && level == LEVEL_ROOT ->
+                PluginReply.error(
+                    PluginErrorCode.PERMISSION_DENIED,
+                    "Shizuku is running as root, and this plugin is only allowed to run commands as the system (adb). Allow it \"Run commands as root\" if you trust it.",
+                )
+            else -> null
+        }
     }
 
     /** The time this call may take: the deadline droidtop gave it, less a margin to answer in. */
@@ -174,7 +235,7 @@ class ShizukuPlugin : DroidtopPlugin {
     private fun statusTile(): PluginResult {
         val value = when (currentState()) {
             STATE_NOT_INSTALLED -> "Not installed"
-            STATE_GRANTED -> "Running, allowed"
+            STATE_GRANTED -> if (reportLevel() == LEVEL_ROOT) "Running as root, allowed" else "Running, allowed"
             else -> "Installed, not allowed"
         }
         return PluginResult.success(mapOf("label" to "Shizuku", "value" to value))
@@ -226,6 +287,11 @@ class ShizukuPlugin : DroidtopPlugin {
         const val ACTION_OPEN_SETUP = "open_setup"
         const val ACTION_GRANT = "grant"
         private const val REQUEST_CODE = 1
+
+        private const val ROOT_UID = 0
+        private const val LEVEL_NONE = "none"
+        private const val LEVEL_ADB = "adb"
+        private const val LEVEL_ROOT = "root"
 
         private const val MAX_ARGS = 64
         private const val MAX_ARG_LENGTH = 4096

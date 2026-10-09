@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-09
+
+### Added
+- Root through Shizuku: when Shizuku's server runs as root (started as root, or Sui), other plugins can run commands as root through it, as their own grant ("Run commands as root"), separate from running them as the system (adb). droidtop offers it only while Shizuku really is root; the status tile says "Running as root, allowed".
+
 ### Changed
-- CI now signs the plugin bundle itself (repo secret `PLUGIN_SIGNING_KEY`, optional `PLUGIN_SIGNING_CERT` packaged as `origin.cert`) and attaches it to the release for a `plugin-v*` tag. No change to the plugin itself.
+- CI now signs the plugin bundle itself (repo secret `PLUGIN_SIGNING_KEY`, optional `PLUGIN_SIGNING_CERT` packaged as `origin.cert`) and attaches it to the release for a `plugin-v*` tag.
+- While Shizuku runs as root, a plugin allowed only "Run commands as the system (adb)" is told to ask for root instead of having its command run as root: Shizuku cannot drop to the shell user without su.
 
 ## [1.1.0] - 2026-09-29
 

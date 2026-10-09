@@ -2,8 +2,8 @@
   "id": "droidtop.shizuku-bridge",
   "origin": "droidtop",
   "label": "Shizuku",
-  "description": "Shizuku for droidtop: a status tile and actions for the Shizuku app, and ADB-level privilege for other plugins and for droidtop itself (ending another app's game from Quit to Library), each only after you allow it.",
-  "version": "1.1.0",
+  "description": "Shizuku for droidtop: a status tile and actions for the Shizuku app, and system-level privilege for other plugins and for droidtop itself (ending another app's game from Quit to Library), plus root when Shizuku runs as root, each only after you allow it.",
+  "version": "1.2.0",
   "kind": "native_bundle",
   "contractVersion": 2,
   "abis": [],
@@ -16,7 +16,7 @@
     { "id": "apps.check", "packages": ["moe.shizuku.privileged.api"], "reason": "See whether Shizuku is installed" },
     { "id": "apps.launch", "reason": "Open Shizuku so you can start it and allow droidtop" },
     { "id": "host.full_trust", "required": true, "reason": "Talks to Shizuku's binder from droidtop's own process, which is where Shizuku allows droidtop" },
-    { "id": "plugins.export_privileged", "reason": "Lets other plugins and droidtop run ADB-level commands through Shizuku, each only after you allow it" }
+    { "id": "plugins.export_privileged", "reason": "Lets other plugins and droidtop run commands through Shizuku, as the system (adb) or, when Shizuku runs as root, as root, each only after you allow it" }
   ],
   "exports": [
     {
@@ -33,6 +33,14 @@
       "attributes": { "level": "adb" },
       "ops": [
         { "op": "exec", "permission": "priv.shell.adb", "job": false }
+      ]
+    },
+    {
+      "api": "priv.shell",
+      "version": "1.0",
+      "attributes": { "level": "root" },
+      "ops": [
+        { "op": "exec", "permission": "priv.shell.root", "job": false }
       ]
     }
   ]
