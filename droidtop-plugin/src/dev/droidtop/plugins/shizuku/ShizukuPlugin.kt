@@ -111,6 +111,8 @@ class ShizukuPlugin : DroidtopPlugin {
         }
         "api:priv.shell" -> when (call.op) {
             "exec" -> exec(call)
+            "read_file" -> readFile(call)
+            "write_file" -> writeFile(call)
             "exec_stream" -> execStream(call)
             "stream_read" -> streamRead(call)
             "stream_write" -> streamWrite(call)
@@ -199,6 +201,112 @@ class ShizukuPlugin : DroidtopPlugin {
         val outcome = run(argv, minOf(wanted, budget(call)))
             ?: return PluginReply.error(PluginErrorCode.TIMEOUT, "the command did not finish in time")
         return PluginReply.ok(JSONObject().put("exit", outcome.exit).put("stdout", outcome.stdout).put("stderr", outcome.stderr))
+    }
+
+    // ---- files in shared storage (docs/plugin-api.md 2.7) -------------------
+
+    /** Absolute, under /storage/ or /sdcard/, no empty, "." or ".." part, not a folder, no control characters. */
+    private fun sharedPath(path: String): Boolean {
+        if (path.length > MAX_PATH_CHARS || path.any { it.isISOControl() }) return false
+        if (!(path.startsWith("/storage/") || path.startsWith("/sdcard/")) || path.endsWith("/")) return false
+        return path.split('/').drop(1).none { it.isEmpty() || it == "." || it == ".." }
+    }
+
+    /** Runs [argv] and returns its exit code and up to [limit] bytes of stdout, binary-safe. Null on timeout. */
+    private fun runBytes(argv: List<String>, timeoutMs: Long, limit: Int, stdin: ByteArray? = null): Pair<Int, ByteArray>? {
+        val process = newProcess(argv)
+        val err = Capture(process.errorStream)
+        err.start()
+        val out = java.io.ByteArrayOutputStream()
+        val reader = Thread {
+            runCatching {
+                val buf = ByteArray(65536)
+                while (true) {
+                    val n = process.inputStream.read(buf)
+                    if (n < 0) break
+                    synchronized(out) { if (out.size() < limit) out.write(buf, 0, minOf(n, limit - out.size())) }
+                }
+            }
+        }
+        reader.start()
+        return try {
+            if (stdin != null) runCatching { process.outputStream.use { it.write(stdin) } } else runCatching { process.outputStream.close() }
+            if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+                process.destroy()
+                null
+            } else {
+                reader.join(STREAM_JOIN_MS)
+                err.join(STREAM_JOIN_MS)
+                process.exitValue() to synchronized(out) { out.toByteArray() }
+            }
+        } finally {
+            runCatching { process.destroy() }
+        }
+    }
+
+    /** `read_file {path, offset, length} -> {dataBase64, eof}`: one piece of a file, as Shizuku's user. A missing file is an error. */
+    private fun readFile(call: PluginCall): PluginReply {
+        val path = call.args.optString("path")
+        val offset = call.args.optLong("offset", 0L)
+        val length = call.args.optInt("length", FILE_PIECE_BYTES)
+        if (!sharedPath(path)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "path must be a file in shared storage")
+        if (offset < 0 || length !in 1..FILE_PIECE_BYTES) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "offset must be 0 or more and length 1 to $FILE_PIECE_BYTES")
+        notReady()?.let { return it }
+        levelRefusal(call)?.let { return it }
+        val wait = minOf(FILE_TIMEOUT_MS, budget(call))
+        val exists = run(listOf("test", "-f", path), wait) ?: return PluginReply.error(PluginErrorCode.TIMEOUT, "Shizuku did not answer in time")
+        if (exists.exit != 0) return PluginReply.error(PluginErrorCode.FAILED, "there is no such file")
+        // One byte more than asked tells whether the file goes on; the path and numbers are arguments, never shell text.
+        val read = runBytes(
+            listOf("sh", "-c", "tail -c +\"\$1\" -- \"\$2\" | head -c \"\$3\"", "sh", (offset + 1).toString(), path, (length + 1).toString()),
+            wait,
+            length + 1,
+        ) ?: return PluginReply.error(PluginErrorCode.TIMEOUT, "the read did not finish in time")
+        val bytes = read.second
+        val more = bytes.size > length
+        val piece = if (more) bytes.copyOf(length) else bytes
+        return PluginReply.ok(JSONObject().put("dataBase64", java.util.Base64.getEncoder().encodeToString(piece)).put("eof", !more))
+    }
+
+    /**
+     * `write_file {path, offset, dataBase64, last} -> {}`: pieces in order from offset 0 into `<path>.droidtop-part`, renamed
+     * over the path on the last one, so the file is never half-written. Any error removes the part file.
+     */
+    private fun writeFile(call: PluginCall): PluginReply {
+        val path = call.args.optString("path")
+        val offset = call.args.optLong("offset", -1L)
+        val last = call.args.optBoolean("last", false)
+        if (!sharedPath(path)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "path must be a file in shared storage")
+        val data = runCatching { java.util.Base64.getDecoder().decode(call.args.optString("dataBase64")) }.getOrElse {
+            return PluginReply.error(PluginErrorCode.INVALID_ARGS, "dataBase64 must be base64")
+        }
+        if (offset < 0 || data.size > FILE_PIECE_BYTES || offset + data.size > MAX_WRITE_FILE_BYTES) {
+            return PluginReply.error(PluginErrorCode.INVALID_ARGS, "offset must be 0 or more, a piece at most $FILE_PIECE_BYTES bytes, a file at most 64 MiB")
+        }
+        notReady()?.let { return it }
+        levelRefusal(call)?.let { return it }
+        val part = "$path.droidtop-part"
+        val wait = minOf(FILE_TIMEOUT_MS, budget(call))
+        fun fail(message: String, code: PluginErrorCode = PluginErrorCode.FAILED): PluginReply {
+            runCatching { run(listOf("rm", "-f", part), STOP_TIMEOUT_MS) }
+            return PluginReply.error(code, message)
+        }
+        if (offset == 0L) {
+            val made = run(listOf("mkdir", "-p", path.substringBeforeLast('/')), wait) ?: return fail("Shizuku did not answer in time", PluginErrorCode.TIMEOUT)
+            if (made.exit != 0) return fail(made.stderr.ifBlank { "the folder could not be made" })
+            run(listOf("rm", "-f", part), wait)
+        } else {
+            val size = run(listOf("stat", "-c", "%s", part), wait) ?: return fail("Shizuku did not answer in time", PluginErrorCode.TIMEOUT)
+            if (size.exit != 0 || size.stdout.trim().toLongOrNull() != offset) return fail("the piece does not follow the last one written", PluginErrorCode.INVALID_ARGS)
+        }
+        val appended = runBytes(listOf("sh", "-c", "cat >> \"\$1\"", "sh", part), wait, 0, data)
+            ?: return fail("the write did not finish in time", PluginErrorCode.TIMEOUT)
+        if (appended.first != 0) return fail("the piece could not be written")
+        if (last) {
+            val moved = run(listOf("mv", "-f", part, path), wait) ?: return fail("Shizuku did not answer in time", PluginErrorCode.TIMEOUT)
+            if (moved.exit != 0) return fail(moved.stderr.ifBlank { "the file could not be put in place" })
+        }
+        return PluginReply.ok(JSONObject())
     }
 
     /**
@@ -512,6 +620,10 @@ class ShizukuPlugin : DroidtopPlugin {
         private const val REPLY_MARGIN_MS = 500L
         private const val MIN_BUDGET_MS = 1_000L
 
+        private const val FILE_PIECE_BYTES = 262144
+        private const val MAX_WRITE_FILE_BYTES = 64L * 1024 * 1024
+        private const val MAX_PATH_CHARS = 1024
+        private const val FILE_TIMEOUT_MS = 30_000L
         private val APPOP_NAME = Regex("^[A-Z][A-Z0-9_]{0,63}\$")
         private val APPOP_MODES = listOf("allow", "ignore", "deny", "default")
         private val PERMISSION_NAME = Regex("^[A-Za-z][A-Za-z0-9_.]{0,199}\$")

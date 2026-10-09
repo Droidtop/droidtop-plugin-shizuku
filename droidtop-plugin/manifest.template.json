@@ -3,7 +3,7 @@
   "origin": "droidtop",
   "label": "Shizuku",
   "description": "Shizuku for droidtop: a status tile and actions for the Shizuku app, and system-level privilege for other plugins and for droidtop itself (ending another app's game from Quit to Library, giving an emulator access you approve), plus root when Shizuku runs as root, each only after you allow it.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "kind": "native_bundle",
   "contractVersion": 2,
   "abis": [],
@@ -35,6 +35,8 @@
       "attributes": { "level": "adb" },
       "ops": [
         { "op": "exec", "permission": "priv.shell.adb", "job": false },
+        { "op": "read_file", "permission": "priv.shell.adb", "job": false },
+        { "op": "write_file", "permission": "priv.shell.adb", "job": false },
         { "op": "exec_stream", "permission": "priv.shell.adb", "job": false },
         { "op": "stream_read", "permission": "priv.shell.adb", "job": false },
         { "op": "stream_write", "permission": "priv.shell.adb", "job": false },
@@ -47,6 +49,8 @@
       "attributes": { "level": "root" },
       "ops": [
         { "op": "exec", "permission": "priv.shell.root", "job": false },
+        { "op": "read_file", "permission": "priv.shell.root", "job": false },
+        { "op": "write_file", "permission": "priv.shell.root", "job": false },
         { "op": "exec_stream", "permission": "priv.shell.root", "job": false },
         { "op": "stream_read", "permission": "priv.shell.root", "job": false },
         { "op": "stream_write", "permission": "priv.shell.root", "job": false },

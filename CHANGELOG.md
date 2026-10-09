@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-09
+
+### Added
+- priv.shell `read_file` and `write_file`: droidtop can read and write a file in shared storage, including other apps' Android/data folders (an emulator's settings file or BIOS folder), with only this plugin installed. Files go in pieces of at most 256 KiB, a write is staged as `<file>.droidtop-part` and renamed into place only when whole, a file may be at most 64 MiB, and only paths under /storage or /sdcard are served. They come under the existing "Run commands as the system (adb)" and "Run commands as root" permissions, so an updated install needs nothing new from you.
+
 ## [1.3.0] - 2026-10-09
 
 ### Added

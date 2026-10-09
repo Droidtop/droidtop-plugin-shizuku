@@ -18,6 +18,10 @@ sources > Plugins like any other plugin bundle. It is a contract 2 plugin
     Emulator setup helper. They are the same `priv.packages` permission as
     `force_stop`; droidtop calls them only after the person turned on
     Settings > Risky actions and confirmed that one use.
+  - `priv.shell@1` also has `read_file` and `write_file` for files in shared
+    storage (docs/plugin-api.md 2.7): pieces of at most 256 KiB, a write staged as
+    `<file>.droidtop-part` and renamed when whole, at most 64 MiB, only under
+    /storage or /sdcard, under the same per-level permissions as `exec`.
   - `priv.shell@1` (attribute `level` = `adb`), op
     `exec {argv: [string], timeoutMs?} -> {exit, stdout, stderr}`. `argv` runs
     directly, never through a shell; each stream keeps its first 64 KiB.
