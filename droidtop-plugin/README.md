@@ -12,6 +12,12 @@ sources > Plugins like any other plugin bundle. It is a contract 2 plugin
   - `priv.packages@1`, op `force_stop {package} -> {stopped: true}`. This is
     what lets droidtop's Quit to Library end an emulator's process on Android
     13, where a non-privileged app has no way to end another app's game.
+  - `priv.packages@1` also has `set_appop {package, op, mode}` (`appops set`,
+    for example `MANAGE_EXTERNAL_STORAGE` `allow` is All files access) and
+    `grant_permission {package, permission}` (`pm grant`), for droidtop's
+    Emulator setup helper. They are the same `priv.packages` permission as
+    `force_stop`; droidtop calls them only after the person turned on
+    Settings > Risky actions and confirmed that one use.
   - `priv.shell@1` (attribute `level` = `adb`), op
     `exec {argv: [string], timeoutMs?} -> {exit, stdout, stderr}`. `argv` runs
     directly, never through a shell; each stream keeps its first 64 KiB.

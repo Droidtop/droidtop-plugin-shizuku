@@ -25,7 +25,11 @@ import rikka.shizuku.Shizuku
  * - **Provider.** It exports two standard interfaces, each running one
  *   command through Shizuku's server:
  *   `priv.packages@1` (`force_stop {package}`, which is what lets Quit to
- *   Library end another app's game where Android 13 gives droidtop no way to)
+ *   Library end another app's game where Android 13 gives droidtop no way to;
+ *   `set_appop {package, op, mode}` and `grant_permission {package, permission}`,
+ *   which the Emulator setup helper uses to give an emulator All files access or
+ *   a runtime permission, each only after the person turned on Settings > Risky
+ *   actions in droidtop and confirmed that one use)
  *   and `priv.shell@1` (`exec {argv}`), the latter at two levels, each its own
  *   grant: "adb" (Shizuku's server runs as the ADB shell user) and "root"
  *   (Shizuku's server runs as uid 0: started as root, or Sui). droidtop's
@@ -101,6 +105,8 @@ class ShizukuPlugin : DroidtopPlugin {
     override fun handle(call: PluginCall): PluginReply = when (call.point) {
         "api:priv.packages" -> when (call.op) {
             "force_stop" -> forceStop(call)
+            "set_appop" -> setAppOp(call)
+            "grant_permission" -> grantPermission(call)
             else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "priv.packages has no op ${call.op}")
         }
         "api:priv.shell" -> when (call.op) {
@@ -139,6 +145,45 @@ class ShizukuPlugin : DroidtopPlugin {
             PluginReply.ok(JSONObject().put("stopped", true))
         } else {
             PluginReply.error(PluginErrorCode.FAILED, outcome.stderr.ifBlank { "am force-stop exited with ${outcome.exit}" })
+        }
+    }
+
+    /**
+     * `appops set <package> <op> <mode>`: e.g. `MANAGE_EXTERNAL_STORAGE` `allow` is "All files access". The op and the mode
+     * are checked against the shapes `appops` takes, so no argument can be anything else.
+     */
+    private fun setAppOp(call: PluginCall): PluginReply {
+        val target = call.args.optString("package")
+        val op = call.args.optString("op")
+        val mode = call.args.optString("mode")
+        if (!PACKAGE_NAME.matches(target)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "package must be a package name")
+        if (!APPOP_NAME.matches(op)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "op must be an AppOps name such as MANAGE_EXTERNAL_STORAGE")
+        if (mode !in APPOP_MODES) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "mode must be one of ${APPOP_MODES.joinToString(", ")}")
+        notReady()?.let { return it }
+        val outcome = run(listOf("appops", "set", target, op, mode), minOf(STOP_TIMEOUT_MS, budget(call)))
+            ?: return PluginReply.error(PluginErrorCode.TIMEOUT, "Shizuku did not answer in time")
+        // `appops` reports an unknown op in its output and may still exit 0.
+        val said = (outcome.stdout + " " + outcome.stderr).trim()
+        return if (outcome.exit == 0 && !said.startsWith("Error", ignoreCase = true) && !said.contains("Unknown operation", ignoreCase = true)) {
+            PluginReply.ok(JSONObject())
+        } else {
+            PluginReply.error(PluginErrorCode.FAILED, said.ifBlank { "appops exited with ${outcome.exit}" })
+        }
+    }
+
+    /** `pm grant <package> <permission>`: a runtime permission the app declares; Android refuses any it does not. */
+    private fun grantPermission(call: PluginCall): PluginReply {
+        val target = call.args.optString("package")
+        val permission = call.args.optString("permission")
+        if (!PACKAGE_NAME.matches(target)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "package must be a package name")
+        if (!PERMISSION_NAME.matches(permission)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "permission must be a permission name")
+        notReady()?.let { return it }
+        val outcome = run(listOf("pm", "grant", target, permission), minOf(STOP_TIMEOUT_MS, budget(call)))
+            ?: return PluginReply.error(PluginErrorCode.TIMEOUT, "Shizuku did not answer in time")
+        return if (outcome.exit == 0) {
+            PluginReply.ok(JSONObject())
+        } else {
+            PluginReply.error(PluginErrorCode.FAILED, outcome.stderr.ifBlank { "pm grant exited with ${outcome.exit}" })
         }
     }
 
@@ -467,6 +512,9 @@ class ShizukuPlugin : DroidtopPlugin {
         private const val REPLY_MARGIN_MS = 500L
         private const val MIN_BUDGET_MS = 1_000L
 
+        private val APPOP_NAME = Regex("^[A-Z][A-Z0-9_]{0,63}\$")
+        private val APPOP_MODES = listOf("allow", "ignore", "deny", "default")
+        private val PERMISSION_NAME = Regex("^[A-Za-z][A-Za-z0-9_.]{0,199}\$")
         private val PACKAGE_NAME = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+\$")
     }
 }

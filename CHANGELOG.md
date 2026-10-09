@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-09
+
+### Added
+- priv.packages `set_appop {package, op, mode}` and `grant_permission {package, permission}`: droidtop's Emulator setup helper uses them to give an emulator All files access (`MANAGE_EXTERNAL_STORAGE`) or a runtime permission, instead of you doing it in Android's screens. droidtop asks only after you turn on Settings > Risky actions there and confirm that one use; the plugin checks the shape of every argument and runs `appops set` or `pm grant` only. They come under the existing "priv.packages" permission, so an updated install needs nothing new from you.
+
 ## [1.2.0] - 2026-10-09
 
 ### Added

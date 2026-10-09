@@ -2,8 +2,8 @@
   "id": "droidtop.shizuku-bridge",
   "origin": "droidtop",
   "label": "Shizuku",
-  "description": "Shizuku for droidtop: a status tile and actions for the Shizuku app, and system-level privilege for other plugins and for droidtop itself (ending another app's game from Quit to Library), plus root when Shizuku runs as root, each only after you allow it.",
-  "version": "1.2.0",
+  "description": "Shizuku for droidtop: a status tile and actions for the Shizuku app, and system-level privilege for other plugins and for droidtop itself (ending another app's game from Quit to Library, giving an emulator access you approve), plus root when Shizuku runs as root, each only after you allow it.",
+  "version": "1.3.0",
   "kind": "native_bundle",
   "contractVersion": 2,
   "abis": [],
@@ -24,7 +24,9 @@
       "version": "1.0",
       "attributes": { "level": "adb" },
       "ops": [
-        { "op": "force_stop", "permission": "priv.packages", "job": false }
+        { "op": "force_stop", "permission": "priv.packages", "job": false },
+        { "op": "set_appop", "permission": "priv.packages", "job": false },
+        { "op": "grant_permission", "permission": "priv.packages", "job": false }
       ]
     },
     {
