@@ -563,11 +563,12 @@ class ShizukuPlugin : DroidtopPlugin {
         // droidtop's app status page reads `installed` for its first row and shows every other key as
         // "<Key>: <value>" (PluginAppStatus.screenFor), so the state goes out as a sentence: on the rig
         // (2026-10-14) the machine value read "State: not_installed" under a wrong "Not installed".
-        val base = mapOf(
-            "package" to SHIZUKU_MANAGER_PACKAGE,
-            "installed" to (state != STATE_NOT_INSTALLED).toString(),
-            "status" to statusText(state),
-        )
+        // The page's first row already says "Not installed"; the sentence is added only when there is more to say.
+        val base = buildMap {
+            put("package", SHIZUKU_MANAGER_PACKAGE)
+            put("installed", (state != STATE_NOT_INSTALLED).toString())
+            if (state != STATE_NOT_INSTALLED) put("status", statusText(state))
+        }
         return when (val action = args.string("action")) {
             null, "", "status" -> PluginResult.success(base)
             ACTION_START, ACTION_OPEN_SETUP -> {

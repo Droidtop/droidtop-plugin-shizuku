@@ -3,7 +3,7 @@
   "origin": "droidtop",
   "label": "Shizuku",
   "description": "Lets droidtop and the plugins you allow use Shizuku for system-level actions, such as closing another app's game.",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "kind": "native_bundle",
   "contractVersion": 2,
   "abis": [],
