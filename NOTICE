@@ -1,0 +1,11 @@
+droidtop-plugin-shizuku
+Licensed as a whole under the GNU General Public License, version 3 (LICENSE).
+
+This repository is a fork of Shizuku (https://github.com/RikkaApps/Shizuku), Copyright Rikka and
+Shizuku contributors, licensed under the Apache License, Version 2.0. Apache-2.0 is compatible with
+GPL-3.0, so the combined work is distributed under GPL-3.0. The upstream licence text is kept
+unchanged in LICENSE.Apache-2.0, and every upstream copyright and licence notice in the source files
+stays as it is. The submodule api/ (RikkaApps/Shizuku-API) keeps its own licence.
+
+The droidtop plugin in droidtop-plugin/ is our own code, Copyright the droidtop contributors,
+GPL-3.0.

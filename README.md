@@ -9,7 +9,7 @@
   <a href="https://github.com/Droidtop/droidtop-plugin-shizuku/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Droidtop/droidtop-plugin-shizuku?label=release&include_prereleases&style=flat-square"></a>
   <a href="https://github.com/Droidtop/droidtop-plugin-shizuku/actions/workflows/plugin-bundle.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/Droidtop/droidtop-plugin-shizuku/plugin-bundle.yml?branch=main&label=build&style=flat-square"></a>
   <img alt="For droidtop" src="https://img.shields.io/badge/for-droidtop-2f7bf5?style=flat-square">
-  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square"></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square"></a>
 </p>
 
 <p align="center">
@@ -53,7 +53,8 @@ Released as `plugin-v1.4.0`, and listed in droidtop's official catalog. The code
 
 ## Licence
 
-The fork and the plugin are Apache-2.0, like upstream Shizuku, see [LICENSE](LICENSE).
+The fork and the plugin are GPL-3.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Upstream Shizuku is
+Apache-2.0, which GPL-3.0 can include; its licence text is kept in [LICENSE.Apache-2.0](LICENSE.Apache-2.0).
 
 ---
 
