@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-14
+
+### Fixed
+- The App status page read "Not installed" and "State: not_installed" whatever Shizuku's state: droidtop's page takes its first row from `installed`, which the plugin did not send, and shows other values as they come. The plugin now sends `installed` and the state as a sentence ("Status: Running, allowed").
+
+### Changed
+- One-sentence description.
+
 ## [1.4.0] - 2026-10-09
 
 ### Added

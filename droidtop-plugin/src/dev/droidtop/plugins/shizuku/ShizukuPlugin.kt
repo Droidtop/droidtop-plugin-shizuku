@@ -540,14 +540,13 @@ class ShizukuPlugin : DroidtopPlugin {
         return if (context.hasShizukuAccess()) STATE_GRANTED else STATE_NOT_GRANTED
     }
 
-    private fun statusTile(): PluginResult {
-        val value = when (currentState()) {
-            STATE_NOT_INSTALLED -> "Not installed"
-            STATE_GRANTED -> if (reportLevel() == LEVEL_ROOT) "Running as root, allowed" else "Running, allowed"
-            else -> "Installed, not allowed"
-        }
-        return PluginResult.success(mapOf("label" to "Shizuku", "value" to value))
+    private fun statusText(state: String): String = when (state) {
+        STATE_NOT_INSTALLED -> "Not installed"
+        STATE_GRANTED -> if (reportLevel() == LEVEL_ROOT) "Running as root, allowed" else "Running, allowed"
+        else -> "Installed, not allowed"
     }
+
+    private fun statusTile(): PluginResult = PluginResult.success(mapOf("label" to "Shizuku", "value" to statusText(currentState())))
 
     /**
      * [PluginCapability.APP_STATUS] doubles as both "what do you know
@@ -561,7 +560,14 @@ class ShizukuPlugin : DroidtopPlugin {
      */
     private fun appStatus(args: PluginArgs): PluginResult {
         val state = currentState()
-        val base = mapOf("package" to SHIZUKU_MANAGER_PACKAGE, "state" to state)
+        // droidtop's app status page reads `installed` for its first row and shows every other key as
+        // "<Key>: <value>" (PluginAppStatus.screenFor), so the state goes out as a sentence: on the rig
+        // (2026-10-14) the machine value read "State: not_installed" under a wrong "Not installed".
+        val base = mapOf(
+            "package" to SHIZUKU_MANAGER_PACKAGE,
+            "installed" to (state != STATE_NOT_INSTALLED).toString(),
+            "status" to statusText(state),
+        )
         return when (val action = args.string("action")) {
             null, "", "status" -> PluginResult.success(base)
             ACTION_START, ACTION_OPEN_SETUP -> {
@@ -570,7 +576,7 @@ class ShizukuPlugin : DroidtopPlugin {
                 } else if (context.launchApp(SHIZUKU_MANAGER_PACKAGE)) {
                     PluginResult.success(base)
                 } else {
-                    PluginResult.failure("could not launch Shizuku")
+                    PluginResult.failure("Shizuku did not open")
                 }
             }
             ACTION_GRANT -> when {
