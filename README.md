@@ -1,3 +1,68 @@
+<h1 align="center">Shizuku for droidtop</h1>
+
+<p align="center">
+  <b>System-level access for droidtop without root.</b><br>
+  A status tile for the Shizuku app, and privilege for other plugins, each only after you allow it.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Droidtop/droidtop-plugin-shizuku/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Droidtop/droidtop-plugin-shizuku?label=release&include_prereleases&style=flat-square"></a>
+  <a href="https://github.com/Droidtop/droidtop-plugin-shizuku/actions/workflows/plugin-bundle.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/Droidtop/droidtop-plugin-shizuku/plugin-bundle.yml?branch=main&label=build&style=flat-square"></a>
+  <img alt="For droidtop" src="https://img.shields.io/badge/for-droidtop-2f7bf5?style=flat-square">
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <img src="docs/images/quick-menu-panel.webp" alt="The Shizuku entry in droidtop's Quick Menu plugins panel, with an App status row" width="35%">
+</p>
+
+<p align="center">
+  <a href="#what-the-droidtop-plugin-does">What it does</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#status">Status</a> ·
+  <a href="#licence">Licence</a> ·
+  <a href="#upstream-readme">Upstream README</a>
+</p>
+
+This is a fork of [Shizuku](https://github.com/RikkaApps/Shizuku) with a [droidtop](https://github.com/Droidtop/droidtop) plugin added in `droidtop-plugin/`. droidtop never starts or bundles Shizuku's server. It talks to the Shizuku app you already installed.
+
+## What the droidtop plugin does
+
+- **Status tile and actions.** Shows "Not installed", "Installed, not allowed" or "Running, allowed", and opens Shizuku or asks it to allow droidtop.
+- **Privilege for other plugins and droidtop itself**, through two interfaces droidtop checks on every call:
+  - ending another app's game, so Quit to Library works on Android 13;
+  - granting an emulator access you approve (an app-op, or a permission) for droidtop's emulator setup helper, only after you turn on Risky actions and confirm that use;
+  - running one command as the ADB shell user, and reading and writing files in shared storage.
+- **Root when Shizuku runs as root**, still only after you allow it.
+
+It is a provider only. Nothing depends on it, and a plugin that wants privilege asks for it as optional. Handheld users can start Shizuku over wireless debugging, so no root is needed.
+
+## Install
+
+You need [droidtop](https://github.com/Droidtop/droidtop). You also need the [Shizuku app](https://shizuku.rikka.app/) installed and started.
+
+1. In droidtop open **Settings > Plugins > Add**. droidtop's own catalog is always there.
+2. Pick **Shizuku** and press **Install**.
+3. Read the permissions it asks for and press **Accept**. Nothing runs until you do.
+
+You can also browse the catalog at [droidtop.github.io](https://droidtop.github.io/), or open this plugin's install page directly: [Install in droidtop](https://droidtop.github.io/install-plugin?catalog=https%3A%2F%2Fraw.githubusercontent.com%2Fdroidtop%2Fdroidtop-platforms%2Fmain%2Fdroidtop-plugins%2Findex.json&id=droidtop.shizuku-bridge). That link only opens a review inside droidtop.
+
+## Status
+
+Released as `plugin-v1.4.0`, and listed in droidtop's official catalog. The code is in `droidtop-plugin/`, and the plan it follows is in `PLUGIN-PLAN.md`.
+
+## Licence
+
+The fork and the plugin are Apache-2.0, like upstream Shizuku, see [LICENSE](LICENSE).
+
+---
+
+## Upstream README
+
+The rest of this page is the README of [Shizuku](https://github.com/RikkaApps/Shizuku), kept as it is.
+
+---
+
 # Shizuku
 
 ## Background
