@@ -79,3 +79,7 @@ priv.shell to other plugins"). Start Shizuku (its own pairing over wireless
 debugging) and allow droidtop in it. Then, in Gaming, launch a console game, press Home, open the
 Quick Menu > Game > Quit to Library: the emulator's process should be gone, not
 just droidtop's bookkeeping. Nothing here has been run on a device yet.
+
+## Signing
+
+The bundle carries `manifest.jws`: a detached ES256 JWS over the exact bytes of `manifest.json`, with this repository's leaf certificate in `x5c` (the root itself is not included). The leaf comes from the repository secrets `PLUGIN_SIGNING_KEY` and `PLUGIN_SIGNING_CERT` and was issued by the droidtop root (pinned by the droidtop app); it names the plugin's origin and id. `sign_jws.py` writes the signature and checks it against the leaf before packing. `manifest.sig` stays in the bundle for older droidtop builds. Expiry dates are not checked.
