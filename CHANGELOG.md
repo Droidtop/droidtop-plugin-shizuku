@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 1.4.3
+
+- Signed with a leaf certificate issued by the droidtop root (manifest.jws); no functional change.
+
 ## [1.4.2] - 2026-10-14
 
 ### Changed
