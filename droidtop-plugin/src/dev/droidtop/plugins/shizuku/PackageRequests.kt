@@ -102,6 +102,63 @@ object PackageRequests {
         return Check.Run(command(target))
     }
 
+    /** What droidtop's broker staged for one install (docs/plugin-api.md 2.7): never a path a caller chose. */
+    data class Staged(val path: String, val size: Long, val sha256: String, val pkg: String)
+
+    private val STAGED_NAME = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.apk\$")
+    private val SHA256 = Regex("^[0-9a-f]{64}\$")
+
+    /**
+     * `install {staged}`: `pm install -S <size>`, the staged file streamed on stdin. The file must be directly in
+     * droidtop's own staging folder [stagingDir] (`<droidtop's cache>/priv-install`) under the name droidtop gives it,
+     * and its size and digest must be what droidtop said; so an older droidtop that passed a caller's args through
+     * unread can never hand over a file droidtop did not stage. Shizuku is never replaced, nor an installed app that
+     * [protectedReason] protects; an app that is not installed yet is the ordinary case.
+     */
+    fun install(staged: Staged?, stagingDir: java.io.File, device: (String) -> Device): Check {
+        staged ?: return Check.Refused("staged is droidtop's to write: this droidtop does not install apps through a plugin")
+        val pkg = packageOf(staged.pkg) ?: return notAPackage
+        if (staged.size <= 0 || !SHA256.matches(staged.sha256)) return Check.Refused("staged must carry the size and digest droidtop read")
+        val file = java.io.File(staged.path)
+        val inStaging = runCatching { file.canonicalFile.parentFile == stagingDir.canonicalFile }.getOrDefault(false)
+        if (!file.isAbsolute || !inStaging || !STAGED_NAME.matches(file.name)) {
+            return Check.Refused("Only an app package droidtop staged is installed.", PERMISSION_DENIED)
+        }
+        if (pkg == SHIZUKU_PACKAGE) return Check.Refused("Shizuku does not replace itself.", PERMISSION_DENIED)
+        val known = device(pkg)
+        if (known.targetUid != null) protectedReason(pkg, known)?.let { return it }
+        if (!file.isFile || file.length() != staged.size || sha256(file) != staged.sha256) {
+            return Check.Refused("The staged app package is not the one droidtop checked.", PERMISSION_DENIED)
+        }
+        return Check.Run(listOf("pm", "install", "-S", staged.size.toString()))
+    }
+
+    fun sha256(file: java.io.File): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(1 shl 16)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** The one plain sentence for `pm install`'s `Failure [CODE: ...]` line about [pkg]; the line itself is the detail. */
+    fun installFailure(output: String, pkg: String): String {
+        val code = Regex("Failure \\[([A-Z_]+)").find(output)?.groupValues?.get(1)
+        return when (code) {
+            "INSTALL_FAILED_VERSION_DOWNGRADE" -> "A newer version of $pkg is already installed."
+            "INSTALL_FAILED_UPDATE_INCOMPATIBLE" -> "The installed $pkg is signed by someone else. Uninstall it first."
+            "INSTALL_FAILED_INSUFFICIENT_STORAGE" -> "There is not enough space to install $pkg."
+            "INSTALL_FAILED_OLDER_SDK" -> "$pkg needs a newer Android than this device has."
+            "INSTALL_FAILED_NO_MATCHING_ABIS" -> "$pkg is not built for this device's processor."
+            else -> "Android did not install $pkg."
+        }
+    }
+
     /** `pm clear` and `pm uninstall` say `Success` on their last line; anything else is the reason they did not. */
     fun succeeded(exit: Int, output: String): Boolean = exit == 0 && output.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() } == "Success"
 }

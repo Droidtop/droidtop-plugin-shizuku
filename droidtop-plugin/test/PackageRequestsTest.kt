@@ -61,6 +61,30 @@ fun main() {
     check(PackageRequests.homeIn("No activity found") == null, "no answer is no Home app")
     check(PackageRequests.deviceQueries(app).all { app in it || "android.intent.category.HOME" in it }, "every query names the package or Home")
 
+    // Install: only a file droidtop staged, unchanged, in its own staging folder.
+    val tmp = kotlin.io.path.createTempDirectory("droidtop-cache").toFile()
+    val staging = java.io.File(tmp, "priv-install").apply { mkdirs() }
+    val apk = java.io.File(staging, "0123abcd-0000-4000-8000-00000000abcd.apk").apply { writeText("an apk") }
+    fun staged(path: String = apk.path, size: Long = apk.length(), sha: String = PackageRequests.sha256(apk), pkg: String = app) =
+        PackageRequests.Staged(path, size, sha, pkg)
+    val notInstalled = device(uid = null)
+    check(PackageRequests.install(staged(), staging, notInstalled) == Check.Run(listOf("pm", "install", "-S", apk.length().toString())), "install streams the staged file into pm install -S <size>")
+    check(PackageRequests.install(staged(), staging, device()) is Check.Run, "install updates an ordinary installed app")
+    check(refused(PackageRequests.install(null, staging, notInstalled)), "install without staged (an older droidtop) is refused")
+    val outside = java.io.File(tmp, "0123abcd-0000-4000-8000-00000000abcd.apk").apply { writeText("an apk") }
+    check(refused(PackageRequests.install(staged(path = outside.path), staging, notInstalled), PackageRequests.PERMISSION_DENIED), "a file outside the staging folder is refused")
+    check(refused(PackageRequests.install(staged(path = staging.path + "/../" + outside.name), staging, notInstalled), PackageRequests.PERMISSION_DENIED), "a path that climbs out is refused")
+    val named = java.io.File(staging, "mine.apk").apply { writeText("an apk") }
+    check(refused(PackageRequests.install(staged(path = named.path), staging, notInstalled), PackageRequests.PERMISSION_DENIED), "a name droidtop does not give is refused")
+    check(refused(PackageRequests.install(staged(size = 99), staging, notInstalled), PackageRequests.PERMISSION_DENIED), "a different size is refused")
+    check(refused(PackageRequests.install(staged(sha = "0".repeat(64)), staging, notInstalled), PackageRequests.PERMISSION_DENIED), "a different digest is refused")
+    check(refused(PackageRequests.install(staged(sha = "nothex"), staging, notInstalled)), "a digest that is not one is INVALID_ARGS")
+    check(refused(PackageRequests.install(staged(pkg = PackageRequests.SHIZUKU_PACKAGE), staging, device()), PackageRequests.PERMISSION_DENIED), "Shizuku is never replaced")
+    check(refused(PackageRequests.install(staged(pkg = "dev.droidtop"), staging, device(uid = OWN_UID)), PackageRequests.PERMISSION_DENIED), "droidtop is never replaced")
+    check(refused(PackageRequests.install(staged(), staging, device(home = app)), PackageRequests.PERMISSION_DENIED), "the Home app in use is never replaced")
+    check(PackageRequests.installFailure("Failure [INSTALL_FAILED_VERSION_DOWNGRADE: Downgrade detected]", app) == "A newer version of $app is already installed.", "a downgrade reads as a sentence")
+    check(PackageRequests.installFailure("Failure [INSTALL_PARSE_FAILED_NOT_APK: x]", app) == "Android did not install $app.", "any other failure reads as one sentence")
+
     // Results.
     check(PackageRequests.succeeded(0, "Success\n"), "Success succeeded")
     check(!PackageRequests.succeeded(0, "Failure [DELETE_FAILED_INTERNAL_ERROR]\n"), "a Failure line did not, even with exit 0")

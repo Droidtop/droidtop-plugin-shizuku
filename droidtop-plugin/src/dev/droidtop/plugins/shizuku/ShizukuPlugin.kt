@@ -111,6 +111,7 @@ class ShizukuPlugin : DroidtopPlugin {
             "revoke_permission" -> permission(call, grant = false)
             "clear_data" -> clearData(call)
             "uninstall" -> uninstall(call)
+            "install" -> install(call)
             else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "priv.packages has no op ${call.op}")
         }
         "api:priv.shell" -> when (call.op) {
@@ -142,10 +143,16 @@ class ShizukuPlugin : DroidtopPlugin {
     }
 
     /** Runs what [check] built, or answers its refusal; [done] reads the finished command. */
-    private fun runChecked(call: PluginCall, check: PackageRequests.Check, done: (Outcome) -> PluginReply): PluginReply = when (check) {
+    private fun runChecked(
+        call: PluginCall,
+        check: PackageRequests.Check,
+        timeoutMs: Long = STOP_TIMEOUT_MS,
+        stdin: java.io.File? = null,
+        done: (Outcome) -> PluginReply,
+    ): PluginReply = when (check) {
         is PackageRequests.Check.Refused -> PluginReply.error(PluginErrorCode.fromId(check.code) ?: PluginErrorCode.INVALID_ARGS, check.message)
         is PackageRequests.Check.Run -> {
-            val outcome = run(check.argv, minOf(STOP_TIMEOUT_MS, budget(call)))
+            val outcome = run(check.argv, minOf(timeoutMs, budget(call)), stdin)
             if (outcome == null) PluginReply.error(PluginErrorCode.TIMEOUT, "Shizuku did not answer in time") else done(outcome)
         }
     }
@@ -217,6 +224,34 @@ class ShizukuPlugin : DroidtopPlugin {
         val check = PackageRequests.uninstall(call.args.optString("package")) { device(call, it) }
         return runChecked(call, check) { outcome ->
             if (PackageRequests.succeeded(outcome.exit, outcome.stdout)) PluginReply.ok(JSONObject().put("uninstalled", true)) else failed(outcome, "pm uninstall")
+        }
+    }
+
+    /**
+     * `install {staged}` (Droidtop/tracker#130): the APK droidtop's broker read, confirmed with the person and staged
+     * in its private cache, streamed into `pm install -S <size>` on stdin; this plugin runs in droidtop's process, so
+     * it reads that cache and no copy is ever readable by the shell user. The staged copy is removed when it ends.
+     */
+    private fun install(call: PluginCall): PluginReply {
+        val json = call.args.optJSONObject("staged")
+        val staged = json?.let { PackageRequests.Staged(it.optString("path"), it.optLong("size", -1L), it.optString("sha256"), it.optString("package")) }
+        // Android points java.io.tmpdir at the app's cache: droidtop's, since this plugin runs in its process.
+        val stagingDir = java.io.File(System.getProperty("java.io.tmpdir").orEmpty(), "priv-install")
+        val file = staged?.let { java.io.File(it.path) }
+        try {
+            notReady()?.let { return it }
+            val check = PackageRequests.install(staged, stagingDir) { device(call, it) }
+            return runChecked(call, check, timeoutMs = INSTALL_TIMEOUT_MS, stdin = file) { outcome ->
+                val pkg = staged!!.pkg
+                val said = (outcome.stdout + "\n" + outcome.stderr).trim()
+                if (PackageRequests.succeeded(outcome.exit, outcome.stdout)) {
+                    PluginReply.ok(JSONObject().put("installed", true).put("package", pkg))
+                } else {
+                    PluginReply.failed(PluginErrorCode.FAILED, PackageRequests.installFailure(said, pkg), said.ifBlank { "pm install exited with ${outcome.exit}" })
+                }
+            }
+        } finally {
+            if (file != null && runCatching { file.canonicalFile.parentFile == stagingDir.canonicalFile }.getOrDefault(false)) file.delete()
         }
     }
 
@@ -519,13 +554,15 @@ class ShizukuPlugin : DroidtopPlugin {
      * Runs [argv] through Shizuku, directly (never through a shell). Null when it does not finish within [timeoutMs].
      * `Shizuku.newProcess` is private since Shizuku 13, so it is reached by reflection, the same way other apps do.
      */
-    private fun run(argv: List<String>, timeoutMs: Long): Outcome? {
+    private fun run(argv: List<String>, timeoutMs: Long, stdin: java.io.File? = null): Outcome? {
         val process = newProcess(argv)
         val out = Capture(process.inputStream)
         val err = Capture(process.errorStream)
         out.start()
         err.start()
         return try {
+            // `pm install -S <size>` reads the APK from here; the output is read on its own threads meanwhile.
+            if (stdin != null) runCatching { stdin.inputStream().use { input -> process.outputStream.use { input.copyTo(it, 1 shl 16) } } }
             val exit = RemoteProcessWait.exitWithin(process, timeoutMs)
             if (exit == null) {
                 process.destroy()
@@ -656,6 +693,8 @@ class ShizukuPlugin : DroidtopPlugin {
         private const val MAX_STREAM_CHARS = 64 * 1024
         private const val STREAM_JOIN_MS = 500L
         private const val STOP_TIMEOUT_MS = 8_000L
+        /** An install is a job (docs/plugin-api.md 2.7): a large APK takes minutes, inside the broker's 30-minute ceiling. */
+        private const val INSTALL_TIMEOUT_MS = 20L * 60 * 1000
         private const val DEFAULT_EXEC_TIMEOUT_MS = 10_000L
         private const val MAX_EXEC_TIMEOUT_MS = 60_000L
         private const val REPLY_MARGIN_MS = 500L

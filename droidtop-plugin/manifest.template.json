@@ -29,7 +29,8 @@
         { "op": "grant_permission", "permission": "priv.packages", "job": false },
         { "op": "revoke_permission", "permission": "priv.packages", "job": false },
         { "op": "clear_data", "permission": "priv.packages", "job": false },
-        { "op": "uninstall", "permission": "priv.packages", "job": false }
+        { "op": "uninstall", "permission": "priv.packages", "job": false },
+        { "op": "install", "permission": "priv.packages", "job": true }
       ]
     },
     {

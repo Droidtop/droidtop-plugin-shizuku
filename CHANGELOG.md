@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `priv.packages@1` ops `clear_data {package}` (`pm clear`), `uninstall {package}` (`pm uninstall --user 0`) and `revoke_permission {package, permission}` (`pm revoke`), each under the `priv.packages` permission (Droidtop/tracker#130). `clear_data` and `uninstall` never touch droidtop, Shizuku, the app Android opens on Home right now, or a system app; the provider reads all four through Shizuku before it runs anything.
 
+- `priv.packages@1` op `install {staged}`, a job: the APK droidtop read, confirmed with the person and staged in its private cache is streamed into `pm install -S <size>` on stdin, then the staged copy is removed. Only a file directly in droidtop's own `cache/priv-install/`, under the name droidtop gives it and with the size and digest droidtop read, is installed, so a droidtop older than the install support never passes a caller's file through. Shizuku is never replaced, nor droidtop, the Home app in use or a system app. Android's failures read as one sentence, with its line under Technical details.
+
 ### Changed
 - Every `priv.packages` request is checked in one place (`PackageRequests`), unit-tested without a device.
 
