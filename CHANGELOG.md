@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Names its kind for droidtop's Plugins page (`category`: system, docs/plugin-api.md 1.2, Droidtop/tracker#179).
+
 ## 1.5.0
 
 ### Added
