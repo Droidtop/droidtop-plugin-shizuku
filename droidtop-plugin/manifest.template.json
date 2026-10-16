@@ -3,7 +3,7 @@
   "origin": "droidtop",
   "label": "Shizuku",
   "description": "Lets droidtop and the plugins you allow use Shizuku for system-level actions, such as closing another app's game.",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "kind": "native_bundle",
   "contractVersion": 2,
   "abis": [],
@@ -26,7 +26,10 @@
       "ops": [
         { "op": "force_stop", "permission": "priv.packages", "job": false },
         { "op": "set_appop", "permission": "priv.packages", "job": false },
-        { "op": "grant_permission", "permission": "priv.packages", "job": false }
+        { "op": "grant_permission", "permission": "priv.packages", "job": false },
+        { "op": "revoke_permission", "permission": "priv.packages", "job": false },
+        { "op": "clear_data", "permission": "priv.packages", "job": false },
+        { "op": "uninstall", "permission": "priv.packages", "job": false }
       ]
     },
     {

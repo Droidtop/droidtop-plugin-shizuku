@@ -30,3 +30,8 @@ jobs:
         run: |
           kotlinc src/dev/droidtop/plugins/shizuku/RemoteProcessWait.kt test/RemoteProcessWaitTest.kt -include-runtime -d "$RUNNER_TEMP/test.jar"
           java -cp "$RUNNER_TEMP/test.jar" RemoteProcessWaitTestKt
+      - name: PackageRequests
+        working-directory: droidtop-plugin
+        run: |
+          kotlinc src/dev/droidtop/plugins/shizuku/PackageRequests.kt test/PackageRequestsTest.kt -include-runtime -d "$RUNNER_TEMP/packages.jar"
+          java -cp "$RUNNER_TEMP/packages.jar" PackageRequestsTestKt

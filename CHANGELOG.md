@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 1.5.0
+
+### Added
+- `priv.packages@1` ops `clear_data {package}` (`pm clear`), `uninstall {package}` (`pm uninstall --user 0`) and `revoke_permission {package, permission}` (`pm revoke`), each under the `priv.packages` permission (Droidtop/tracker#130). `clear_data` and `uninstall` never touch droidtop, Shizuku, the app Android opens on Home right now, or a system app; the provider reads all four through Shizuku before it runs anything.
+
+### Changed
+- Every `priv.packages` request is checked in one place (`PackageRequests`), unit-tested without a device.
+
 ## 1.4.4
 
 ### Fixed
