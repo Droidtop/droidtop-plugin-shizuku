@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Names its kind for droidtop's Plugins page (`category`: system, docs/plugin-api.md 1.2, Droidtop/tracker#179).
+- Declares `os.shizuku`: when droidtop runs full access in an isolated process, this plugin reaches Shizuku through droidtop's relay, which forwards only the calls its commands need (docs/plugin-api.md 5.6, Droidtop/tracker#53). An older droidtop lists it as not supported and nothing changes.
 
 ## 1.5.0
 

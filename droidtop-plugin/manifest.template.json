@@ -17,6 +17,7 @@
     { "id": "apps.check", "packages": ["moe.shizuku.privileged.api"], "reason": "See whether Shizuku is installed" },
     { "id": "apps.launch", "reason": "Open Shizuku so you can start it and allow droidtop" },
     { "id": "host.full_trust", "required": true, "reason": "Talks to Shizuku's binder from droidtop's own process, which is where Shizuku allows droidtop" },
+    { "id": "os.shizuku", "reason": "Reaches Shizuku through droidtop, which makes only the calls this plugin's commands need" },
     { "id": "plugins.export_privileged", "reason": "Lets other plugins and droidtop run commands through Shizuku, as the system (adb) or, when Shizuku runs as root, as root, each only after you allow it" }
   ],
   "exports": [
