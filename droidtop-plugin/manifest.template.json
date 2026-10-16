@@ -6,6 +6,7 @@
   "version": "1.5.0",
   "kind": "native_bundle",
   "contractVersion": 2,
+  "category": "system",
   "abis": [],
   "entryClass": "dev.droidtop.plugins.shizuku.ShizukuPlugin",
   "provides": [
