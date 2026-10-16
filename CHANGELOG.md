@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 1.4.4
+
+### Fixed
+- The plugin was disabled with "Stopped: The plugin failed to load" ("process hasn't exited"). Shizuku's remote process reports a command still running as an IllegalArgumentException across Binder, which Java's `waitFor(timeout)` does not take as "still running". All three waits (commands, byte reads, exec sessions) now poll the exit value and treat either exception as running until the timeout.
+
 ## 1.4.3
 
 - Signed with a leaf certificate issued by the droidtop root (manifest.jws); no functional change.

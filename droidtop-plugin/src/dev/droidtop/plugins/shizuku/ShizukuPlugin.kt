@@ -11,7 +11,6 @@ import dev.droidtop.pluginhost.PluginErrorCode
 import dev.droidtop.pluginhost.PluginReply
 import dev.droidtop.pluginhost.PluginResult
 import java.io.InputStream
-import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import rikka.shizuku.Shizuku
@@ -231,13 +230,14 @@ class ShizukuPlugin : DroidtopPlugin {
         reader.start()
         return try {
             if (stdin != null) runCatching { process.outputStream.use { it.write(stdin) } } else runCatching { process.outputStream.close() }
-            if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+            val exit = RemoteProcessWait.exitWithin(process, timeoutMs)
+            if (exit == null) {
                 process.destroy()
                 null
             } else {
                 reader.join(STREAM_JOIN_MS)
                 err.join(STREAM_JOIN_MS)
-                process.exitValue() to synchronized(out) { out.toByteArray() }
+                exit to synchronized(out) { out.toByteArray() }
             }
         } finally {
             runCatching { process.destroy() }
@@ -436,9 +436,10 @@ class ShizukuPlugin : DroidtopPlugin {
             .put("stdout", java.util.Base64.getEncoder().encodeToString(stdout))
             .put("stderr", java.util.Base64.getEncoder().encodeToString(stderr))
         val drained = session.out.eof && session.err.eof && !session.out.hasData() && !session.err.hasData()
-        if (drained && session.process.waitFor(EXIT_WAIT_MS, TimeUnit.MILLISECONDS)) {
+        val exit = if (drained) RemoteProcessWait.exitWithin(session.process, EXIT_WAIT_MS) else null
+        if (exit != null) {
             sessions.remove(key)
-            out.put("exited", true).put("exit", session.process.exitValue())
+            out.put("exited", true).put("exit", exit)
         } else {
             out.put("exited", false)
         }
@@ -493,13 +494,14 @@ class ShizukuPlugin : DroidtopPlugin {
         out.start()
         err.start()
         return try {
-            if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+            val exit = RemoteProcessWait.exitWithin(process, timeoutMs)
+            if (exit == null) {
                 process.destroy()
                 null
             } else {
                 out.join(STREAM_JOIN_MS)
                 err.join(STREAM_JOIN_MS)
-                Outcome(process.exitValue(), out.text(), err.text())
+                Outcome(exit, out.text(), err.text())
             }
         } finally {
             runCatching { process.destroy() }
