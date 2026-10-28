@@ -36,6 +36,16 @@
       ]
     },
     {
+      "api": "priv.settings",
+      "version": "1.0",
+      "attributes": { "level": "adb" },
+      "ops": [
+        { "op": "get", "permission": "priv.settings", "job": false },
+        { "op": "put", "permission": "priv.settings", "job": false },
+        { "op": "delete", "permission": "priv.settings", "job": false }
+      ]
+    },
+    {
       "api": "priv.shell",
       "version": "1.0",
       "attributes": { "level": "adb" },

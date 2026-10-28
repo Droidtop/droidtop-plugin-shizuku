@@ -35,3 +35,8 @@ jobs:
         run: |
           kotlinc src/dev/droidtop/plugins/shizuku/PackageRequests.kt test/PackageRequestsTest.kt -include-runtime -d "$RUNNER_TEMP/packages.jar"
           java -cp "$RUNNER_TEMP/packages.jar" PackageRequestsTestKt
+      - name: SettingsRequests
+        working-directory: droidtop-plugin
+        run: |
+          kotlinc src/dev/droidtop/plugins/shizuku/PackageRequests.kt src/dev/droidtop/plugins/shizuku/SettingsRequests.kt test/SettingsRequestsTest.kt -include-runtime -d "$RUNNER_TEMP/settings.jar"
+          java -cp "$RUNNER_TEMP/settings.jar" SettingsRequestsTestKt

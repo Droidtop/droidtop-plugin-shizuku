@@ -114,6 +114,12 @@ class ShizukuPlugin : DroidtopPlugin {
             "install" -> install(call)
             else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "priv.packages has no op ${call.op}")
         }
+        "api:priv.settings" -> when (call.op) {
+            "get" -> settingsGet(call)
+            "put" -> settingsPut(call)
+            "delete" -> settingsDelete(call)
+            else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "priv.settings has no op ${call.op}")
+        }
         "api:priv.shell" -> when (call.op) {
             "exec" -> exec(call)
             "read_file" -> readFile(call)
@@ -181,6 +187,32 @@ class ShizukuPlugin : DroidtopPlugin {
             } else {
                 PluginReply.error(PluginErrorCode.FAILED, said.ifBlank { "appops exited with ${outcome.exit}" })
             }
+        }
+    }
+
+    /** `settings get <namespace> <key>` (priv.settings, Droidtop/tracker#72): `{value}`, null for a setting that is not set. */
+    private fun settingsGet(call: PluginCall): PluginReply {
+        val check = SettingsRequests.get(call.args.optString("namespace"), call.args.optString("key"))
+        if (check is PackageRequests.Check.Run) notReady()?.let { return it }
+        return runChecked(call, check) {
+            if (it.exit == 0) PluginReply.ok(JSONObject().put("value", SettingsRequests.valueIn(it.stdout) ?: JSONObject.NULL)) else failed(it, "settings get")
+        }
+    }
+
+    /** `settings put <namespace> <key> <value>`; the keys Shizuku itself stands on are refused (SettingsRequests.KEPT). */
+    private fun settingsPut(call: PluginCall): PluginReply {
+        val value = if (call.args.has("value") && !call.args.isNull("value")) call.args.optString("value") else null
+        val check = SettingsRequests.put(call.args.optString("namespace"), call.args.optString("key"), value)
+        if (check is PackageRequests.Check.Run) notReady()?.let { return it }
+        return runChecked(call, check) { if (it.exit == 0) PluginReply.ok(JSONObject()) else failed(it, "settings put") }
+    }
+
+    /** `settings delete <namespace> <key>`: `{deleted}`, false when it was not set. */
+    private fun settingsDelete(call: PluginCall): PluginReply {
+        val check = SettingsRequests.delete(call.args.optString("namespace"), call.args.optString("key"))
+        if (check is PackageRequests.Check.Run) notReady()?.let { return it }
+        return runChecked(call, check) {
+            if (it.exit == 0) PluginReply.ok(JSONObject().put("deleted", SettingsRequests.deletedIn(it.stdout))) else failed(it, "settings delete")
         }
     }
 

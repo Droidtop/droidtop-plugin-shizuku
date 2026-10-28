@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `priv.settings@1`, level adb, under the `priv.settings` permission (Droidtop/tracker#72): `get {namespace, key} -> {value}` (null when not set), `put {namespace, key, value}` and `delete {namespace, key} -> {deleted}`, for Android's `secure` and `global` settings through `settings`. The namespace, key and value are checked before anything runs and are each one argument, never shell text; a value is one line of at most 4096 characters. USB and wireless debugging and developer options (`global adb_enabled`, `adb_wifi_enabled`, `development_settings_enabled`) are read but never changed or deleted, since Shizuku started over adb stops without them.
 - Names its kind for droidtop's Plugins page (`category`: system, docs/plugin-api.md 1.2, Droidtop/tracker#179).
 - Declares `os.shizuku`: when droidtop runs full access in an isolated process, this plugin reaches Shizuku through droidtop's relay, which forwards only the calls its commands need (docs/plugin-api.md 5.6, Droidtop/tracker#53). An older droidtop lists it as not supported and nothing changes.
 
