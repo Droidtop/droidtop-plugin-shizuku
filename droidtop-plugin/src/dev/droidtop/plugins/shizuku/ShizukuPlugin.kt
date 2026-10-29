@@ -41,9 +41,10 @@ import rikka.shizuku.Shizuku
  *   its server runs. It reports that last one to droidtop
  *   (`plugins.report_level`), which offers the root export only while it is
  *   "root" (docs/plugin-api.md 2.7). droidtop itself never runs `su`.
- * - **The surface for Shizuku itself.** A status tile and an app_status page,
- *   as before: is it installed, running and allowed, and a way to open
- *   Shizuku's own pairing screen or ask it to allow droidtop.
+ * - **The surface for Shizuku itself.** Facets ([ShizukuFacets], docs/plugin-api.md
+ *   1.10): its state on the Quick Menu and its settings page, with Open Shizuku
+ *   or Allow droidtop in place while one is needed; and droidtop's app_status
+ *   page, which asks only for its state.
  *
  * How the binder gets here: Shizuku's server pushes it to a content provider
  * named `<droidtop's applicationId>.shizuku`. Droidtop's :plugin-host declares
@@ -97,13 +98,18 @@ class ShizukuPlugin : DroidtopPlugin {
     }
 
     override fun invoke(capability: PluginCapability, args: PluginArgs): PluginResult = when (capability) {
-        PluginCapability.STATUS_TILE -> statusTile()
         PluginCapability.APP_STATUS -> appStatus(args)
         else -> PluginResult.failure("ShizukuPlugin does not implement ${capability.id}")
     }
 
-    /** v2 calls: the two exported APIs here, everything else (the tile, the app page) through the contract 1 path above. */
+    /** v2 calls: the exported APIs and the facets here, the app page through the contract 1 path above. */
     override fun handle(call: PluginCall): PluginReply = when (call.point) {
+        "ui.facets" -> when (call.op) {
+            "get" -> PluginReply.ok(facets(call.args.optString("target")))
+            ShizukuFacets.OP_OPEN -> openShizuku()
+            ShizukuFacets.OP_ALLOW -> allowDroidtop()
+            else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "Shizuku has no \"${call.op}\"")
+        }
         "api:priv.packages" -> when (call.op) {
             "force_stop" -> forceStop(call)
             "set_appop" -> setAppOp(call)
@@ -649,17 +655,56 @@ class ShizukuPlugin : DroidtopPlugin {
         else -> "Installed, not allowed"
     }
 
-    private fun statusTile(): PluginResult = PluginResult.success(mapOf("label" to "Shizuku", "value" to statusText(currentState())))
+    private fun facetState(): ShizukuFacets.State = ShizukuFacets.stateOf(
+        installed = context.isAppInstalled(SHIZUKU_MANAGER_PACKAGE),
+        running = runCatching { Shizuku.pingBinder() }.getOrDefault(false),
+        allowed = context.hasShizukuAccess(),
+    )
+
+    /** The facets droidtop asked for, as JSON ([ShizukuFacets] decides which). */
+    private fun facets(target: String): JSONObject {
+        val state = facetState()
+        val list = JSONArray()
+        for (spec in ShizukuFacets.plan(target, state, root = state == ShizukuFacets.State.READY && reportLevel() == LEVEL_ROOT)) {
+            val facet = JSONObject().put("id", spec.id).put("kind", spec.kind).put("v", 1).put("targets", JSONArray().put(target))
+            if (spec.kind == "notice") {
+                facet.put("title", spec.label).put("tone", "caution")
+                spec.sub?.let { facet.put("sub", it) }
+            } else {
+                facet.put("label", spec.label)
+                spec.value?.let { facet.put("value", it) }
+                spec.sub?.let { facet.put("sub", it) }
+                spec.state?.let { facet.put("state", it) }
+                spec.tone?.let { facet.put("tone", it) }
+                spec.op?.let { facet.put("call", JSONObject().put("op", it)) }
+            }
+            list.put(facet)
+        }
+        return JSONObject().put("facets", list)
+    }
+
+    /** Open Shizuku: its own screen is where it is paired and started; nothing else can start it without root or ADB. */
+    private fun openShizuku(): PluginReply = when {
+        !context.isAppInstalled(SHIZUKU_MANAGER_PACKAGE) -> PluginReply.error(PluginErrorCode.FAILED, "Shizuku is not installed")
+        context.launchApp(SHIZUKU_MANAGER_PACKAGE) -> PluginReply.ok(JSONObject().put("message", "Start Shizuku there, then come back"))
+        else -> PluginReply.error(PluginErrorCode.FAILED, "Shizuku did not open")
+    }
+
+    /** Allow droidtop: Shizuku answers with its own dialog. */
+    private fun allowDroidtop(): PluginReply = when (facetState()) {
+        ShizukuFacets.State.NOT_INSTALLED -> PluginReply.error(PluginErrorCode.FAILED, "Shizuku is not installed")
+        ShizukuFacets.State.NOT_RUNNING -> PluginReply.error(PluginErrorCode.FAILED, "Shizuku is not running. Open it and start it first.")
+        ShizukuFacets.State.READY -> PluginReply.ok(JSONObject().put("message", "droidtop is already allowed"))
+        ShizukuFacets.State.NOT_ALLOWED -> {
+            runCatching { Shizuku.requestPermission(REQUEST_CODE) }
+            PluginReply.ok(JSONObject().put("message", "Shizuku is asking you to allow droidtop"))
+        }
+    }
 
     /**
-     * [PluginCapability.APP_STATUS] doubles as both "what do you know
-     * about this package" (no `action` arg: state only) and "do
-     * something about it": [ACTION_START] and [ACTION_OPEN_SETUP] open
-     * Shizuku's own manager (its one Activity is the pairing and start
-     * screen, and there is no separate "start the service" command
-     * without root or an ADB shell droidtop has no business running
-     * itself), and [ACTION_GRANT] asks Shizuku to allow droidtop, which
-     * Shizuku answers with its own dialog.
+     * [PluginCapability.APP_STATUS]: what droidtop's app status page shows about Shizuku. The page asks only for the
+     * state (and launches the app itself); starting Shizuku and allowing droidtop are facets now ([facets]), because
+     * the page never sent the start, open_setup and grant actions this used to answer (Droidtop/tracker#602).
      */
     private fun appStatus(args: PluginArgs): PluginResult {
         val state = currentState()
@@ -674,24 +719,6 @@ class ShizukuPlugin : DroidtopPlugin {
         }
         return when (val action = args.string("action")) {
             null, "", "status" -> PluginResult.success(base)
-            ACTION_START, ACTION_OPEN_SETUP -> {
-                if (state == STATE_NOT_INSTALLED) {
-                    PluginResult.failure("Shizuku is not installed")
-                } else if (context.launchApp(SHIZUKU_MANAGER_PACKAGE)) {
-                    PluginResult.success(base)
-                } else {
-                    PluginResult.failure("Shizuku did not open")
-                }
-            }
-            ACTION_GRANT -> when {
-                state == STATE_NOT_INSTALLED -> PluginResult.failure("Shizuku is not installed")
-                !runCatching { Shizuku.pingBinder() }.getOrDefault(false) -> PluginResult.failure("Shizuku is not running. Open it and start it first.")
-                state == STATE_GRANTED -> PluginResult.success(base)
-                else -> {
-                    runCatching { Shizuku.requestPermission(REQUEST_CODE) }
-                    PluginResult.success(base + ("note" to "Shizuku is asking you to allow droidtop"))
-                }
-            }
             else -> PluginResult.failure("unknown action \"$action\"")
         }
     }
@@ -701,9 +728,6 @@ class ShizukuPlugin : DroidtopPlugin {
         const val STATE_NOT_INSTALLED = "not_installed"
         const val STATE_NOT_GRANTED = "installed_not_granted"
         const val STATE_GRANTED = "granted"
-        const val ACTION_START = "start"
-        const val ACTION_OPEN_SETUP = "open_setup"
-        const val ACTION_GRANT = "grant"
         private const val REQUEST_CODE = 1
 
         private const val MAX_SESSIONS = 8

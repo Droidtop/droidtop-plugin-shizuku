@@ -6,14 +6,14 @@
   "summary": "System-level actions through Shizuku, for droidtop and the plugins you allow",
   "publisher": "droidtop",
   "homepage": "https://github.com/Droidtop/droidtop-plugin-shizuku",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "kind": "native_bundle",
-  "contractVersion": 2,
+  "contractVersion": 3,
   "category": "system",
   "abis": [],
   "entryClass": "dev.droidtop.plugins.shizuku.ShizukuPlugin",
   "provides": [
-    { "point": "ui.status_tile", "label": "Shizuku" },
+    { "point": "ui.facets", "version": 1, "id": "shizuku", "label": "Shizuku", "targets": ["quickmenu", "settings.page"] },
     { "point": "apps.bridge", "label": "Shizuku" }
   ],
   "permissions": [

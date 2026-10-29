@@ -32,9 +32,11 @@ sources > Plugins like any other plugin bundle. It is a contract 2 plugin
   and stay off until you allow them under Permissions. The plugin adds only what
   the broker cannot know: whether Shizuku is running and whether droidtop is
   allowed in it, and it says so in words when not.
-- **Shows Shizuku itself:** a status tile ("Not installed", "Installed, not
-  allowed", "Running, allowed") and an app page with actions to open Shizuku's
-  own screen and to ask it to allow droidtop.
+- **Shows Shizuku itself, as facets** (`ui.facets`, docs/plugin-api.md 1.10):
+  its state on the Quick Menu and its settings page ("Not installed",
+  "Installed, not running", "Running, droidtop not allowed yet", "Running,
+  allowed"), with Open Shizuku or Allow droidtop in place while one is needed
+  (`ShizukuFacets.kt`); droidtop's app page shows the same state.
 
 It declares `host.full_trust`: Shizuku allows droidtop's UID, and this plugin
 runs in droidtop's own process, so it cannot be contained. That is also why it

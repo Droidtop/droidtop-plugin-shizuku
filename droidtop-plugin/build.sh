@@ -35,7 +35,7 @@ cd "$(dirname "$0")"
 rm -rf build
 mkdir -p build/classes
 
-kotlinc -cp "$PLUGIN_HOST_CLASSPATH:$SHIZUKU_CLASSPATH:$ANDROID_JAR" -d build/classes src/dev/droidtop/plugins/shizuku/ShizukuPlugin.kt src/dev/droidtop/plugins/shizuku/RemoteProcessWait.kt src/dev/droidtop/plugins/shizuku/PackageRequests.kt src/dev/droidtop/plugins/shizuku/SettingsRequests.kt
+kotlinc -cp "$PLUGIN_HOST_CLASSPATH:$SHIZUKU_CLASSPATH:$ANDROID_JAR" -d build/classes src/dev/droidtop/plugins/shizuku/ShizukuPlugin.kt src/dev/droidtop/plugins/shizuku/RemoteProcessWait.kt src/dev/droidtop/plugins/shizuku/PackageRequests.kt src/dev/droidtop/plugins/shizuku/SettingsRequests.kt src/dev/droidtop/plugins/shizuku/ShizukuFacets.kt
 
 # The host's and Shizuku's classes are only on the classpath so d8 can desugar against them; they are not in the output.
 CLASSPATH_ARGS=()

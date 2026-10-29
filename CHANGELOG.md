@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Plugin 1.6.0: Shizuku itself is shown through facets (contract 3, docs/plugin-api.md 1.10 "Facets first", Droidtop/tracker#602): its state on the Quick Menu and its settings page, and Open Shizuku or Allow droidtop in place while one is needed. droidtop's app page never sent the start, open_setup and grant actions the plugin answered, so neither step could be reached from droidtop; those actions and the status tile are gone.
 - Its page shows a one-line summary, droidtop as its maker and its own page, from the manifest's `summary`, `publisher` and `homepage` (docs/plugin-api.md 1.2 "Presentation", Droidtop/tracker#521).
 - `priv.settings@1`, level adb, under the `priv.settings` permission (Droidtop/tracker#72): `get {namespace, key} -> {value}` (null when not set), `put {namespace, key, value}` and `delete {namespace, key} -> {deleted}`, for Android's `secure` and `global` settings through `settings`. The namespace, key and value are checked before anything runs and are each one argument, never shell text; a value is one line of at most 4096 characters. USB and wireless debugging and developer options (`global adb_enabled`, `adb_wifi_enabled`, `development_settings_enabled`) are read but never changed or deleted, since Shizuku started over adb stops without them.
 - Names its kind for droidtop's Plugins page (`category`: system, docs/plugin-api.md 1.2, Droidtop/tracker#179).
