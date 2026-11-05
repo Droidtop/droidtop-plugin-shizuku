@@ -1,0 +1,18 @@
+name: Plugin line
+
+# plugin/stable is exactly upstream-sync's pinned commit with plugin-core written over it (README "Branches"). This
+# rebuilds that composition on every push to plugin-core or a line, and fails on any difference: a recipe change
+# made on a line instead of on plugin-core. The tool lives once, in Droidtop/droidtop-platforms, pinned by commit.
+on:
+  push:
+    branches: [plugin-core, 'plugin/**']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  line:
+    uses: Droidtop/droidtop-platforms/.github/workflows/plugin-line-check.yml@a984319e765fda7a1c1d7c0b3a3c55b2c048cb5e
+    with:
+      tool-ref: a984319e765fda7a1c1d7c0b3a3c55b2c048cb5e

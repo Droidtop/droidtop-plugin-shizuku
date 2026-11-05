@@ -2,7 +2,7 @@ name: Plugin tests
 
 on:
   push:
-    branches: [main]
+    branches: [plugin-core]
     paths:
       - 'droidtop-plugin/**'
       - '.github/workflows/plugin-tests.yml'
