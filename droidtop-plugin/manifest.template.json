@@ -1,0 +1,80 @@
+{
+  "id": "droidtop.shizuku-bridge",
+  "origin": "droidtop",
+  "label": "Shizuku",
+  "description": "Lets droidtop and the plugins you allow use Shizuku for system-level actions, such as closing another app's game.",
+  "summary": "System-level actions through Shizuku, for droidtop and the plugins you allow",
+  "publisher": "droidtop",
+  "homepage": "https://github.com/Droidtop/droidtop-plugin-shizuku",
+  "version": "1.6.0",
+  "kind": "native_bundle",
+  "contractVersion": 3,
+  "category": "system",
+  "abis": [],
+  "entryClass": "dev.droidtop.plugins.shizuku.ShizukuPlugin",
+  "provides": [
+    { "point": "ui.facets", "version": 1, "id": "shizuku", "label": "Shizuku", "targets": ["quickmenu", "settings.page"] },
+    { "point": "apps.bridge", "label": "Shizuku" }
+  ],
+  "permissions": [
+    { "id": "apps.check", "packages": ["moe.shizuku.privileged.api"], "reason": "See whether Shizuku is installed" },
+    { "id": "apps.launch", "reason": "Open Shizuku so you can start it and allow droidtop" },
+    { "id": "host.full_trust", "required": true, "reason": "Talks to Shizuku's binder from droidtop's own process, which is where Shizuku allows droidtop" },
+    { "id": "os.shizuku", "reason": "Reaches Shizuku through droidtop, which makes only the calls this plugin's commands need" },
+    { "id": "plugins.export_privileged", "reason": "Lets other plugins and droidtop run commands through Shizuku, as the system (adb) or, when Shizuku runs as root, as root, each only after you allow it" }
+  ],
+  "exports": [
+    {
+      "api": "priv.packages",
+      "version": "1.0",
+      "attributes": { "level": "adb" },
+      "ops": [
+        { "op": "force_stop", "permission": "priv.packages", "job": false },
+        { "op": "set_appop", "permission": "priv.packages", "job": false },
+        { "op": "grant_permission", "permission": "priv.packages", "job": false },
+        { "op": "revoke_permission", "permission": "priv.packages", "job": false },
+        { "op": "clear_data", "permission": "priv.packages", "job": false },
+        { "op": "uninstall", "permission": "priv.packages", "job": false },
+        { "op": "install", "permission": "priv.packages", "job": true }
+      ]
+    },
+    {
+      "api": "priv.settings",
+      "version": "1.0",
+      "attributes": { "level": "adb" },
+      "ops": [
+        { "op": "get", "permission": "priv.settings", "job": false },
+        { "op": "put", "permission": "priv.settings", "job": false },
+        { "op": "delete", "permission": "priv.settings", "job": false }
+      ]
+    },
+    {
+      "api": "priv.shell",
+      "version": "1.0",
+      "attributes": { "level": "adb" },
+      "ops": [
+        { "op": "exec", "permission": "priv.shell.adb", "job": false },
+        { "op": "read_file", "permission": "priv.shell.adb", "job": false },
+        { "op": "write_file", "permission": "priv.shell.adb", "job": false },
+        { "op": "exec_stream", "permission": "priv.shell.adb", "job": false },
+        { "op": "stream_read", "permission": "priv.shell.adb", "job": false },
+        { "op": "stream_write", "permission": "priv.shell.adb", "job": false },
+        { "op": "stream_kill", "permission": "priv.shell.adb", "job": false }
+      ]
+    },
+    {
+      "api": "priv.shell",
+      "version": "1.0",
+      "attributes": { "level": "root" },
+      "ops": [
+        { "op": "exec", "permission": "priv.shell.root", "job": false },
+        { "op": "read_file", "permission": "priv.shell.root", "job": false },
+        { "op": "write_file", "permission": "priv.shell.root", "job": false },
+        { "op": "exec_stream", "permission": "priv.shell.root", "job": false },
+        { "op": "stream_read", "permission": "priv.shell.root", "job": false },
+        { "op": "stream_write", "permission": "priv.shell.root", "job": false },
+        { "op": "stream_kill", "permission": "priv.shell.root", "job": false }
+      ]
+    }
+  ]
+}
