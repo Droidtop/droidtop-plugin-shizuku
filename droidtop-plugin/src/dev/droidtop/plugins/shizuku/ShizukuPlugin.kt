@@ -2,7 +2,6 @@ package dev.droidtop.plugins.shizuku
 
 import android.content.pm.PackageManager
 import dev.droidtop.pluginhost.DroidtopPlugin
-import dev.droidtop.pluginhost.LegacyHandle
 import dev.droidtop.pluginhost.PluginArgs
 import dev.droidtop.pluginhost.PluginCall
 import dev.droidtop.pluginhost.PluginCapability
@@ -136,7 +135,7 @@ class ShizukuPlugin : DroidtopPlugin {
             "stream_kill" -> streamKill(call)
             else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "priv.shell has no op ${call.op}")
         }
-        else -> LegacyHandle.translate(this, call)
+        else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "Nothing here for ${call.point}")
     }
 
     // ---- provider ------------------------------------------------------
