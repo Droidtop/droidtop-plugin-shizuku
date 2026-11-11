@@ -1,0 +1,97 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+- Plugin 1.6.0: Shizuku itself is shown through facets (contract 3, docs/plugin-api.md 1.10 "Facets first", Droidtop/tracker#602): its state on the Quick Menu and its settings page, and Open Shizuku or Allow droidtop in place while one is needed. droidtop's app page never sent the start, open_setup and grant actions the plugin answered, so neither step could be reached from droidtop; those actions and the status tile are gone.
+- Its page shows a one-line summary, droidtop as its maker and its own page, from the manifest's `summary`, `publisher` and `homepage` (docs/plugin-api.md 1.2 "Presentation", Droidtop/tracker#521).
+- `priv.settings@1`, level adb, under the `priv.settings` permission (Droidtop/tracker#72): `get {namespace, key} -> {value}` (null when not set), `put {namespace, key, value}` and `delete {namespace, key} -> {deleted}`, for Android's `secure` and `global` settings through `settings`. The namespace, key and value are checked before anything runs and are each one argument, never shell text; a value is one line of at most 4096 characters. USB and wireless debugging and developer options (`global adb_enabled`, `adb_wifi_enabled`, `development_settings_enabled`) are read but never changed or deleted, since Shizuku started over adb stops without them.
+- Names its kind for droidtop's Plugins page (`category`: system, docs/plugin-api.md 1.2, Droidtop/tracker#179).
+- Declares `os.shizuku`: when droidtop runs full access in an isolated process, this plugin reaches Shizuku through droidtop's relay, which forwards only the calls its commands need (docs/plugin-api.md 5.6, Droidtop/tracker#53). An older droidtop lists it as not supported and nothing changes.
+
+## 1.5.0
+
+### Added
+- `priv.packages@1` ops `clear_data {package}` (`pm clear`), `uninstall {package}` (`pm uninstall --user 0`) and `revoke_permission {package, permission}` (`pm revoke`), each under the `priv.packages` permission (Droidtop/tracker#130). `clear_data` and `uninstall` never touch droidtop, Shizuku, the app Android opens on Home right now, or a system app; the provider reads all four through Shizuku before it runs anything.
+
+- `priv.packages@1` op `install {staged}`, a job: the APK droidtop read, confirmed with the person and staged in its private cache is streamed into `pm install -S <size>` on stdin, then the staged copy is removed. Only a file directly in droidtop's own `cache/priv-install/`, under the name droidtop gives it and with the size and digest droidtop read, is installed, so a droidtop older than the install support never passes a caller's file through. Shizuku is never replaced, nor droidtop, the Home app in use or a system app. Android's failures read as one sentence, with its line under Technical details.
+
+### Changed
+- Every `priv.packages` request is checked in one place (`PackageRequests`), unit-tested without a device.
+
+## 1.4.4
+
+### Fixed
+- The plugin was disabled with "Stopped: The plugin failed to load" ("process hasn't exited"). Shizuku's remote process reports a command still running as an IllegalArgumentException across Binder, which Java's `waitFor(timeout)` does not take as "still running". All three waits (commands, byte reads, exec sessions) now poll the exit value and treat either exception as running until the timeout.
+
+## 1.4.3
+
+- Signed with a leaf certificate issued by the droidtop root (manifest.jws); no functional change.
+
+## [1.4.2] - 2026-10-14
+
+### Changed
+- App status says "Not installed" once: the status sentence is sent only when Shizuku is installed (1.4.1 showed "Not installed" and "Status: Not installed").
+
+## [1.4.1] - 2026-10-14
+
+### Fixed
+- The App status page read "Not installed" and "State: not_installed" whatever Shizuku's state: droidtop's page takes its first row from `installed`, which the plugin did not send, and shows other values as they come. The plugin now sends `installed` and the state as a sentence ("Status: Running, allowed").
+
+### Changed
+- One-sentence description.
+
+## [1.4.0] - 2026-10-09
+
+### Added
+- priv.shell `read_file` and `write_file`: droidtop can read and write a file in shared storage, including other apps' Android/data folders (an emulator's settings file or BIOS folder), with only this plugin installed. Files go in pieces of at most 256 KiB, a write is staged as `<file>.droidtop-part` and renamed into place only when whole, a file may be at most 64 MiB, and only paths under /storage or /sdcard are served. They come under the existing "Run commands as the system (adb)" and "Run commands as root" permissions, so an updated install needs nothing new from you.
+
+## [1.3.0] - 2026-10-09
+
+### Added
+- priv.packages `set_appop {package, op, mode}` and `grant_permission {package, permission}`: droidtop's Emulator setup helper uses them to give an emulator All files access (`MANAGE_EXTERNAL_STORAGE`) or a runtime permission, instead of you doing it in Android's screens. droidtop asks only after you turn on Settings > Risky actions there and confirm that one use; the plugin checks the shape of every argument and runs `appops set` or `pm grant` only. They come under the existing "priv.packages" permission, so an updated install needs nothing new from you.
+
+## [1.2.0] - 2026-10-09
+
+### Added
+- Long-running commands with input and output (priv.shell exec_stream, stream_read, stream_write, stream_kill), at the system (adb) and root levels, for droidtop's rooted desktop and for plugins allowed them.
+- Root through Shizuku: when Shizuku's server runs as root (started as root, or Sui), other plugins can run commands as root through it, as their own grant ("Run commands as root"), separate from running them as the system (adb). droidtop offers it only while Shizuku really is root; the status tile says "Running as root, allowed".
+
+### Changed
+- CI now signs the plugin bundle itself (repo secret `PLUGIN_SIGNING_KEY`, optional `PLUGIN_SIGNING_CERT` packaged as `origin.cert`) and attaches it to the release for a `plugin-v*` tag.
+- While Shizuku runs as root, a plugin allowed only "Run commands as the system (adb)" is told to ask for root instead of having its command run as root: Shizuku cannot drop to the shell user without su.
+
+## [1.1.0] - 2026-09-29
+
+### Added
+
+- Other plugins and droidtop itself can ask Shizuku to force-stop an app (priv.packages) or run an ADB-level shell command (priv.shell), each only after you allow it.
+
+### Changed
+
+- The plugin now uses the second plugin contract: it declares what it provides and what it needs up front, so droidtop shows the request on its Permissions screen.
+
+## [1.0.0]
+
+### Added
+
+- Plugin wrapper exposing Shizuku status (installed, granted, or not granted) through droidtop status tile and app actions.
+- Plugin plan describing native-bundle reuse, root/ADB pairing path, and shared capability for other plugins.
+- CI workflow to build the plugin payload against droidtop's plugin-host API.
+- License clarification and daily upstream sync workflow.
+
+### Changed
+
+- Plugin now runs directly in droidtop's own process; removed enginehost hosting assumption.
+- Plugin framing updated from private fork to public droidtop plugin fork.
+- CI checkout path fixed to run from workspace root instead of a subdirectory.
+- Updated upstream base to Shizuku 13.6.0 with AGP 8.10.1, LTO, and translation updates.
+
+### Fixed
+
+- License exemption text corrected.
+- Plugin source placement in CI build adjusted to plugin-repo path.

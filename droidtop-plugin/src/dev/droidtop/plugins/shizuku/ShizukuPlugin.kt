@@ -1,0 +1,764 @@
+package dev.droidtop.plugins.shizuku
+
+import android.content.pm.PackageManager
+import dev.droidtop.pluginhost.DroidtopPlugin
+import dev.droidtop.pluginhost.LegacyHandle
+import dev.droidtop.pluginhost.PluginArgs
+import dev.droidtop.pluginhost.PluginCall
+import dev.droidtop.pluginhost.PluginCapability
+import dev.droidtop.pluginhost.PluginContext
+import dev.droidtop.pluginhost.PluginErrorCode
+import dev.droidtop.pluginhost.PluginReply
+import dev.droidtop.pluginhost.PluginResult
+import java.io.InputStream
+import org.json.JSONArray
+import org.json.JSONObject
+import rikka.shizuku.Shizuku
+
+/**
+ * Shizuku (github.com/RikkaApps/Shizuku, Apache-2.0) as a droidtop plugin,
+ * and droidtop's provider of ADB-level privilege (docs/plugin-api.md 2.7).
+ *
+ * Two jobs:
+ *
+ * - **Provider.** It exports two standard interfaces, each running one
+ *   command through Shizuku's server:
+ *   `priv.packages@1` (`force_stop {package}`, which is what lets Quit to
+ *   Library end another app's game where Android 13 gives droidtop no way to;
+ *   `set_appop {package, op, mode}` and `grant_permission {package, permission}`,
+ *   which the Emulator setup helper uses to give an emulator All files access or
+ *   a runtime permission, each only after the person turned on Settings > Risky
+ *   actions in droidtop and confirmed that one use; `revoke_permission`,
+ *   `clear_data` and `uninstall`, Droidtop/tracker#130, whose checks are
+ *   [PackageRequests])
+ *   and `priv.shell@1` (`exec {argv}`), the latter at two levels, each its own
+ *   grant: "adb" (Shizuku's server runs as the ADB shell user) and "root"
+ *   (Shizuku's server runs as uid 0: started as root, or Sui). droidtop's
+ *   broker has already checked the caller's own grant for the op's permission
+ *   (`priv.shell.adb` or `priv.shell.root`, carried in `caller.grants`) before
+ *   `handle` is called, so this class applies only what the broker cannot
+ *   know: is Shizuku running, is droidtop allowed in it, and as which user
+ *   its server runs. It reports that last one to droidtop
+ *   (`plugins.report_level`), which offers the root export only while it is
+ *   "root" (docs/plugin-api.md 2.7). droidtop itself never runs `su`.
+ * - **The surface for Shizuku itself.** Facets ([ShizukuFacets], docs/plugin-api.md
+ *   1.10): its state on the Quick Menu and its settings page, with Open Shizuku
+ *   or Allow droidtop in place while one is needed; and droidtop's app_status
+ *   page, which asks only for its state.
+ *
+ * How the binder gets here: Shizuku's server pushes it to a content provider
+ * named `<droidtop's applicationId>.shizuku`. Droidtop's :plugin-host declares
+ * Shizuku's own `ShizukuProvider` under that name in this plugin's process
+ * and carries Shizuku's client library, and this plugin's class loader
+ * delegates to the host's first, so `rikka.shizuku.Shizuku` below is the
+ * copy that holds the binder. Nothing here bundles Shizuku's client.
+ *
+ * Plugin runs in droidtop's own process (full trust, not contained): the
+ * Shizuku permission is granted to droidtop's UID, which is why this plugin
+ * declares `host.full_trust` and why it can only be a provider, never a
+ * requirement of another plugin's core function.
+ */
+class ShizukuPlugin : DroidtopPlugin {
+    private lateinit var context: PluginContext
+
+    override fun onLoad(context: PluginContext) {
+        this.context = context
+        // Off the load: the first report is a broker round trip and Shizuku may not have sent its binder yet.
+        Thread({ reportLevel() }, "shizuku-level").apply { isDaemon = true }.start()
+    }
+
+    // ---- the level Shizuku's server runs at ------------------------------
+
+    /** The last level droidtop accepted, so an unchanged level is not re-sent on every call. */
+    @Volatile private var reported: String? = null
+
+    /** "root" while Shizuku's server is uid 0, "adb" while it is the shell user, "none" while it cannot be used. */
+    private fun serverLevel(): String = runCatching {
+        if (!Shizuku.pingBinder() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+            LEVEL_NONE
+        } else if (Shizuku.getUid() == ROOT_UID) {
+            LEVEL_ROOT
+        } else {
+            LEVEL_ADB
+        }
+    }.getOrDefault(LEVEL_NONE)
+
+    /**
+     * Tells droidtop which level the `priv.shell` root export may be offered at right now. An older droidtop without
+     * `plugins.report_level` refuses it, and then the root export is simply never offered there.
+     */
+    private fun reportLevel(level: String = serverLevel()): String {
+        if (level != reported) {
+            val ok = runCatching {
+                JSONObject(context.call("plugins", 1, "report_level", JSONObject().put("api", "priv.shell").put("level", level).toString())).optBoolean("ok")
+            }.getOrDefault(false)
+            if (ok) reported = level
+        }
+        return level
+    }
+
+    override fun invoke(capability: PluginCapability, args: PluginArgs): PluginResult = when (capability) {
+        PluginCapability.APP_STATUS -> appStatus(args)
+        else -> PluginResult.failure("ShizukuPlugin does not implement ${capability.id}")
+    }
+
+    /** v2 calls: the exported APIs and the facets here, the app page through the contract 1 path above. */
+    override fun handle(call: PluginCall): PluginReply = when (call.point) {
+        "ui.facets" -> when (call.op) {
+            "get" -> PluginReply.ok(facets(call.args.optString("target")))
+            ShizukuFacets.OP_OPEN -> openShizuku()
+            ShizukuFacets.OP_ALLOW -> allowDroidtop()
+            else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "Shizuku has no \"${call.op}\"")
+        }
+        "api:priv.packages" -> when (call.op) {
+            "force_stop" -> forceStop(call)
+            "set_appop" -> setAppOp(call)
+            "grant_permission" -> permission(call, grant = true)
+            "revoke_permission" -> permission(call, grant = false)
+            "clear_data" -> clearData(call)
+            "uninstall" -> uninstall(call)
+            "install" -> install(call)
+            else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "priv.packages has no op ${call.op}")
+        }
+        "api:priv.settings" -> when (call.op) {
+            "get" -> settingsGet(call)
+            "put" -> settingsPut(call)
+            "delete" -> settingsDelete(call)
+            else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "priv.settings has no op ${call.op}")
+        }
+        "api:priv.shell" -> when (call.op) {
+            "exec" -> exec(call)
+            "read_file" -> readFile(call)
+            "write_file" -> writeFile(call)
+            "exec_stream" -> execStream(call)
+            "stream_read" -> streamRead(call)
+            "stream_write" -> streamWrite(call)
+            "stream_kill" -> streamKill(call)
+            else -> PluginReply.error(PluginErrorCode.UNSUPPORTED, "priv.shell has no op ${call.op}")
+        }
+        else -> LegacyHandle.translate(this, call)
+    }
+
+    // ---- provider ------------------------------------------------------
+
+    /** Null when Shizuku can be used right now, otherwise the reply that says why not, in words a person can act on. */
+    private fun notReady(): PluginReply? {
+        val running = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+        if (!running) {
+            return PluginReply.error(PluginErrorCode.PROVIDER_UNAVAILABLE, "Shizuku is not running. Open Shizuku and start it.")
+        }
+        val allowed = runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+        if (!allowed) {
+            return PluginReply.error(PluginErrorCode.PERMISSION_DENIED, "droidtop is not allowed in Shizuku. Open Shizuku and allow droidtop.")
+        }
+        return null
+    }
+
+    /** Runs what [check] built, or answers its refusal; [done] reads the finished command. */
+    private fun runChecked(
+        call: PluginCall,
+        check: PackageRequests.Check,
+        timeoutMs: Long = STOP_TIMEOUT_MS,
+        stdin: java.io.File? = null,
+        done: (Outcome) -> PluginReply,
+    ): PluginReply = when (check) {
+        is PackageRequests.Check.Refused -> PluginReply.error(PluginErrorCode.fromId(check.code) ?: PluginErrorCode.INVALID_ARGS, check.message)
+        is PackageRequests.Check.Run -> {
+            val outcome = run(check.argv, minOf(timeoutMs, budget(call)), stdin)
+            if (outcome == null) PluginReply.error(PluginErrorCode.TIMEOUT, "Shizuku did not answer in time") else done(outcome)
+        }
+    }
+
+    private fun failed(outcome: Outcome, command: String): PluginReply =
+        PluginReply.error(PluginErrorCode.FAILED, (outcome.stdout + "\n" + outcome.stderr).trim().ifBlank { "$command exited with ${outcome.exit}" })
+
+    private fun forceStop(call: PluginCall): PluginReply {
+        val check = PackageRequests.forceStop(call.args.optString("package"))
+        if (check is PackageRequests.Check.Run) notReady()?.let { return it }
+        return runChecked(call, check) { if (it.exit == 0) PluginReply.ok(JSONObject().put("stopped", true)) else failed(it, "am force-stop") }
+    }
+
+    /**
+     * `appops set <package> <op> <mode>`: e.g. `MANAGE_EXTERNAL_STORAGE` `allow` is "All files access". The op and the mode
+     * are checked against the shapes `appops` takes, so no argument can be anything else.
+     */
+    private fun setAppOp(call: PluginCall): PluginReply {
+        val check = PackageRequests.setAppOp(call.args.optString("package"), call.args.optString("op"), call.args.optString("mode"))
+        if (check is PackageRequests.Check.Run) notReady()?.let { return it }
+        return runChecked(call, check) { outcome ->
+            // `appops` reports an unknown op in its output and may still exit 0.
+            val said = (outcome.stdout + " " + outcome.stderr).trim()
+            if (outcome.exit == 0 && !said.startsWith("Error", ignoreCase = true) && !said.contains("Unknown operation", ignoreCase = true)) {
+                PluginReply.ok(JSONObject())
+            } else {
+                PluginReply.error(PluginErrorCode.FAILED, said.ifBlank { "appops exited with ${outcome.exit}" })
+            }
+        }
+    }
+
+    /** `settings get <namespace> <key>` (priv.settings, Droidtop/tracker#72): `{value}`, null for a setting that is not set. */
+    private fun settingsGet(call: PluginCall): PluginReply {
+        val check = SettingsRequests.get(call.args.optString("namespace"), call.args.optString("key"))
+        if (check is PackageRequests.Check.Run) notReady()?.let { return it }
+        return runChecked(call, check) {
+            if (it.exit == 0) PluginReply.ok(JSONObject().put("value", SettingsRequests.valueIn(it.stdout) ?: JSONObject.NULL)) else failed(it, "settings get")
+        }
+    }
+
+    /** `settings put <namespace> <key> <value>`; the keys Shizuku itself stands on are refused (SettingsRequests.KEPT). */
+    private fun settingsPut(call: PluginCall): PluginReply {
+        val value = if (call.args.has("value") && !call.args.isNull("value")) call.args.optString("value") else null
+        val check = SettingsRequests.put(call.args.optString("namespace"), call.args.optString("key"), value)
+        if (check is PackageRequests.Check.Run) notReady()?.let { return it }
+        return runChecked(call, check) { if (it.exit == 0) PluginReply.ok(JSONObject()) else failed(it, "settings put") }
+    }
+
+    /** `settings delete <namespace> <key>`: `{deleted}`, false when it was not set. */
+    private fun settingsDelete(call: PluginCall): PluginReply {
+        val check = SettingsRequests.delete(call.args.optString("namespace"), call.args.optString("key"))
+        if (check is PackageRequests.Check.Run) notReady()?.let { return it }
+        return runChecked(call, check) {
+            if (it.exit == 0) PluginReply.ok(JSONObject().put("deleted", SettingsRequests.deletedIn(it.stdout))) else failed(it, "settings delete")
+        }
+    }
+
+    /** `pm grant` / `pm revoke <package> <permission>`: a runtime permission the app declares; Android refuses any it does not. */
+    private fun permission(call: PluginCall, grant: Boolean): PluginReply {
+        val pkg = call.args.optString("package")
+        val permission = call.args.optString("permission")
+        val check = if (grant) PackageRequests.grantPermission(pkg, permission) else PackageRequests.revokePermission(pkg, permission)
+        if (check is PackageRequests.Check.Run) notReady()?.let { return it }
+        return runChecked(call, check) { if (it.exit == 0) PluginReply.ok(JSONObject()) else failed(it, if (grant) "pm grant" else "pm revoke") }
+    }
+
+    /**
+     * What [PackageRequests.Device] needs for [pkg], read through Shizuku: its uid, the Home app and whether it is a
+     * system app. A query that does not answer leaves its part unknown, and an unknown uid refuses (not installed).
+     */
+    private fun device(call: PluginCall, pkg: String): PackageRequests.Device {
+        val (uid, home, system) = PackageRequests.deviceQueries(pkg).map { argv ->
+            run(argv, minOf(STOP_TIMEOUT_MS, budget(call)))?.takeIf { it.exit == 0 }?.stdout.orEmpty()
+        }
+        return PackageRequests.Device(
+            ownUid = android.os.Process.myUid(),
+            targetUid = PackageRequests.uidIn(uid, pkg),
+            homePackage = PackageRequests.homeIn(home),
+            targetIsSystem = PackageRequests.listed(system, pkg),
+        )
+    }
+
+    /** `pm clear <package>` (Droidtop/tracker#130): never droidtop, Shizuku, the Home app in use or a system app. */
+    private fun clearData(call: PluginCall): PluginReply {
+        notReady()?.let { return it }
+        val check = PackageRequests.clearData(call.args.optString("package")) { device(call, it) }
+        return runChecked(call, check) { outcome ->
+            if (PackageRequests.succeeded(outcome.exit, outcome.stdout)) PluginReply.ok(JSONObject().put("cleared", true)) else failed(outcome, "pm clear")
+        }
+    }
+
+    /** `pm uninstall --user 0 <package>` (Droidtop/tracker#130): never droidtop, Shizuku, the Home app in use or a system app. */
+    private fun uninstall(call: PluginCall): PluginReply {
+        notReady()?.let { return it }
+        val check = PackageRequests.uninstall(call.args.optString("package")) { device(call, it) }
+        return runChecked(call, check) { outcome ->
+            if (PackageRequests.succeeded(outcome.exit, outcome.stdout)) PluginReply.ok(JSONObject().put("uninstalled", true)) else failed(outcome, "pm uninstall")
+        }
+    }
+
+    /**
+     * `install {staged}` (Droidtop/tracker#130): the APK droidtop's broker read, confirmed with the person and staged
+     * in its private cache, streamed into `pm install -S <size>` on stdin; this plugin runs in droidtop's process, so
+     * it reads that cache and no copy is ever readable by the shell user. The staged copy is removed when it ends.
+     */
+    private fun install(call: PluginCall): PluginReply {
+        val json = call.args.optJSONObject("staged")
+        val staged = json?.let { PackageRequests.Staged(it.optString("path"), it.optLong("size", -1L), it.optString("sha256"), it.optString("package")) }
+        // Android points java.io.tmpdir at the app's cache: droidtop's, since this plugin runs in its process.
+        val stagingDir = java.io.File(System.getProperty("java.io.tmpdir").orEmpty(), "priv-install")
+        val file = staged?.let { java.io.File(it.path) }
+        try {
+            notReady()?.let { return it }
+            val check = PackageRequests.install(staged, stagingDir) { device(call, it) }
+            return runChecked(call, check, timeoutMs = INSTALL_TIMEOUT_MS, stdin = file) { outcome ->
+                val pkg = staged!!.pkg
+                val said = (outcome.stdout + "\n" + outcome.stderr).trim()
+                if (PackageRequests.succeeded(outcome.exit, outcome.stdout)) {
+                    PluginReply.ok(JSONObject().put("installed", true).put("package", pkg))
+                } else {
+                    PluginReply.failed(PluginErrorCode.FAILED, PackageRequests.installFailure(said, pkg), said.ifBlank { "pm install exited with ${outcome.exit}" })
+                }
+            }
+        } finally {
+            if (file != null && runCatching { file.canonicalFile.parentFile == stagingDir.canonicalFile }.getOrDefault(false)) file.delete()
+        }
+    }
+
+    private fun exec(call: PluginCall): PluginReply {
+        val array = call.args.optJSONArray("argv")
+        val argv = if (array == null) emptyList() else List(array.length()) { array.optString(it) }
+        if (argv.isEmpty() || argv.size > MAX_ARGS || argv.any { it.isEmpty() || it.length > MAX_ARG_LENGTH }) {
+            return PluginReply.error(PluginErrorCode.INVALID_ARGS, "argv must list 1 to $MAX_ARGS non-empty arguments")
+        }
+        notReady()?.let { return it }
+        levelRefusal(call)?.let { return it }
+        val wanted = call.args.optLong("timeoutMs", DEFAULT_EXEC_TIMEOUT_MS).coerceIn(500L, MAX_EXEC_TIMEOUT_MS)
+        val outcome = run(argv, minOf(wanted, budget(call)))
+            ?: return PluginReply.error(PluginErrorCode.TIMEOUT, "the command did not finish in time")
+        return PluginReply.ok(JSONObject().put("exit", outcome.exit).put("stdout", outcome.stdout).put("stderr", outcome.stderr))
+    }
+
+    // ---- files in shared storage (docs/plugin-api.md 2.7) -------------------
+
+    /** Absolute, under /storage/ or /sdcard/, no empty, "." or ".." part, not a folder, no control characters. */
+    private fun sharedPath(path: String): Boolean {
+        if (path.length > MAX_PATH_CHARS || path.any { it.isISOControl() }) return false
+        if (!(path.startsWith("/storage/") || path.startsWith("/sdcard/")) || path.endsWith("/")) return false
+        return path.split('/').drop(1).none { it.isEmpty() || it == "." || it == ".." }
+    }
+
+    /** Runs [argv] and returns its exit code and up to [limit] bytes of stdout, binary-safe. Null on timeout. */
+    private fun runBytes(argv: List<String>, timeoutMs: Long, limit: Int, stdin: ByteArray? = null): Pair<Int, ByteArray>? {
+        val process = newProcess(argv)
+        val err = Capture(process.errorStream)
+        err.start()
+        val out = java.io.ByteArrayOutputStream()
+        val reader = Thread {
+            runCatching {
+                val buf = ByteArray(65536)
+                while (true) {
+                    val n = process.inputStream.read(buf)
+                    if (n < 0) break
+                    synchronized(out) { if (out.size() < limit) out.write(buf, 0, minOf(n, limit - out.size())) }
+                }
+            }
+        }
+        reader.start()
+        return try {
+            if (stdin != null) runCatching { process.outputStream.use { it.write(stdin) } } else runCatching { process.outputStream.close() }
+            val exit = RemoteProcessWait.exitWithin(process, timeoutMs)
+            if (exit == null) {
+                process.destroy()
+                null
+            } else {
+                reader.join(STREAM_JOIN_MS)
+                err.join(STREAM_JOIN_MS)
+                exit to synchronized(out) { out.toByteArray() }
+            }
+        } finally {
+            runCatching { process.destroy() }
+        }
+    }
+
+    /** `read_file {path, offset, length} -> {dataBase64, eof}`: one piece of a file, as Shizuku's user. A missing file is an error. */
+    private fun readFile(call: PluginCall): PluginReply {
+        val path = call.args.optString("path")
+        val offset = call.args.optLong("offset", 0L)
+        val length = call.args.optInt("length", FILE_PIECE_BYTES)
+        if (!sharedPath(path)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "path must be a file in shared storage")
+        if (offset < 0 || length !in 1..FILE_PIECE_BYTES) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "offset must be 0 or more and length 1 to $FILE_PIECE_BYTES")
+        notReady()?.let { return it }
+        levelRefusal(call)?.let { return it }
+        val wait = minOf(FILE_TIMEOUT_MS, budget(call))
+        val exists = run(listOf("test", "-f", path), wait) ?: return PluginReply.error(PluginErrorCode.TIMEOUT, "Shizuku did not answer in time")
+        if (exists.exit != 0) return PluginReply.error(PluginErrorCode.FAILED, "there is no such file")
+        // One byte more than asked tells whether the file goes on; the path and numbers are arguments, never shell text.
+        val read = runBytes(
+            listOf("sh", "-c", "tail -c +\"\$1\" -- \"\$2\" | head -c \"\$3\"", "sh", (offset + 1).toString(), path, (length + 1).toString()),
+            wait,
+            length + 1,
+        ) ?: return PluginReply.error(PluginErrorCode.TIMEOUT, "the read did not finish in time")
+        val bytes = read.second
+        val more = bytes.size > length
+        val piece = if (more) bytes.copyOf(length) else bytes
+        return PluginReply.ok(JSONObject().put("dataBase64", java.util.Base64.getEncoder().encodeToString(piece)).put("eof", !more))
+    }
+
+    /**
+     * `write_file {path, offset, dataBase64, last} -> {}`: pieces in order from offset 0 into `<path>.droidtop-part`, renamed
+     * over the path on the last one, so the file is never half-written. Any error removes the part file.
+     */
+    private fun writeFile(call: PluginCall): PluginReply {
+        val path = call.args.optString("path")
+        val offset = call.args.optLong("offset", -1L)
+        val last = call.args.optBoolean("last", false)
+        if (!sharedPath(path)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "path must be a file in shared storage")
+        val data = runCatching { java.util.Base64.getDecoder().decode(call.args.optString("dataBase64")) }.getOrElse {
+            return PluginReply.error(PluginErrorCode.INVALID_ARGS, "dataBase64 must be base64")
+        }
+        if (offset < 0 || data.size > FILE_PIECE_BYTES || offset + data.size > MAX_WRITE_FILE_BYTES) {
+            return PluginReply.error(PluginErrorCode.INVALID_ARGS, "offset must be 0 or more, a piece at most $FILE_PIECE_BYTES bytes, a file at most 64 MiB")
+        }
+        notReady()?.let { return it }
+        levelRefusal(call)?.let { return it }
+        val part = "$path.droidtop-part"
+        val wait = minOf(FILE_TIMEOUT_MS, budget(call))
+        fun fail(message: String, code: PluginErrorCode = PluginErrorCode.FAILED): PluginReply {
+            runCatching { run(listOf("rm", "-f", part), STOP_TIMEOUT_MS) }
+            return PluginReply.error(code, message)
+        }
+        if (offset == 0L) {
+            val made = run(listOf("mkdir", "-p", path.substringBeforeLast('/')), wait) ?: return fail("Shizuku did not answer in time", PluginErrorCode.TIMEOUT)
+            if (made.exit != 0) return fail(made.stderr.ifBlank { "the folder could not be made" })
+            run(listOf("rm", "-f", part), wait)
+        } else {
+            val size = run(listOf("stat", "-c", "%s", part), wait) ?: return fail("Shizuku did not answer in time", PluginErrorCode.TIMEOUT)
+            if (size.exit != 0 || size.stdout.trim().toLongOrNull() != offset) return fail("the piece does not follow the last one written", PluginErrorCode.INVALID_ARGS)
+        }
+        val appended = runBytes(listOf("sh", "-c", "cat >> \"\$1\"", "sh", part), wait, 0, data)
+            ?: return fail("the write did not finish in time", PluginErrorCode.TIMEOUT)
+        if (appended.first != 0) return fail("the piece could not be written")
+        if (last) {
+            val moved = run(listOf("mv", "-f", part, path), wait) ?: return fail("Shizuku did not answer in time", PluginErrorCode.TIMEOUT)
+            if (moved.exit != 0) return fail(moved.stderr.ifBlank { "the file could not be put in place" })
+        }
+        return PluginReply.ok(JSONObject())
+    }
+
+    /**
+     * Null when this exec may run at the level Shizuku's server runs at, else why not. A caller allowed root
+     * (`priv.shell.root`) is served only while the server is uid 0. A caller allowed only the system level
+     * (`priv.shell.adb`) is NOT served while the server is root: Shizuku runs every command as its own user and there is
+     * no way to drop to the shell user without `su`, so running it would give that caller root it was never allowed.
+     */
+    private fun levelRefusal(call: PluginCall): PluginReply? {
+        // The level of the export that served the call (docs/plugin-api.md 2.7); an older droidtop sends only the grant.
+        val grants = call.caller.optJSONArray("grants")
+        val wantsRoot = call.caller.optString("level").let { level ->
+            if (level.isNotBlank()) level == LEVEL_ROOT else grants != null && (0 until grants.length()).any { grants.optString(it) == "priv.shell.root" }
+        }
+        // droidtop's own calls (the task list, the person's own rooted desktop) are not a plugin's grant: they may run as
+        // whatever user Shizuku runs as, as long as they get at least the level they asked for.
+        val fromDroidtop = call.caller.optString("kind") == "host"
+        val level = reportLevel()
+        return when {
+            wantsRoot && level != LEVEL_ROOT ->
+                PluginReply.error(PluginErrorCode.PROVIDER_UNAVAILABLE, "Shizuku is not running as root, so it cannot run commands as root.")
+            !wantsRoot && level == LEVEL_ROOT && !fromDroidtop ->
+                PluginReply.error(
+                    PluginErrorCode.PERMISSION_DENIED,
+                    "Shizuku is running as root, and this plugin is only allowed to run commands as the system (adb). Allow it \"Run commands as root\" if you trust it.",
+                )
+            else -> null
+        }
+    }
+
+    // ---- stream sessions (docs/plugin-api.md 2.7) --------------------------
+
+    /** One running command: its process and a drain per output stream. Keyed by its caller and the caller's token. */
+    private class Session(val process: Process) {
+        val out = Drain(process.inputStream).also { it.start() }
+        val err = Drain(process.errorStream).also { it.start() }
+    }
+
+    /**
+     * Reads one stream on its own thread into a buffer of at most [MAX_UNREAD_BYTES]; when the caller does not read, it
+     * stops reading too, so the command blocks as it would on a full pipe.
+     */
+    private class Drain(private val stream: InputStream) : Thread() {
+        private val lock = Object()
+        private val buffer = java.io.ByteArrayOutputStream()
+        @Volatile var eof = false
+            private set
+
+        init {
+            isDaemon = true
+        }
+
+        override fun run() {
+            val chunk = ByteArray(8192)
+            try {
+                while (true) {
+                    val n = stream.read(chunk)
+                    if (n < 0) break
+                    synchronized(lock) {
+                        while (buffer.size() >= MAX_UNREAD_BYTES) lock.wait()
+                        buffer.write(chunk, 0, n)
+                    }
+                }
+            } catch (_: Exception) {
+                // The process ended or was killed: what was read is still handed out.
+            } finally {
+                eof = true
+            }
+        }
+
+        fun hasData(): Boolean = synchronized(lock) { buffer.size() > 0 }
+
+        /** Up to [max] bytes, removed from the buffer. */
+        fun take(max: Int): ByteArray = synchronized(lock) {
+            val all = buffer.toByteArray()
+            val n = minOf(max, all.size)
+            buffer.reset()
+            buffer.write(all, n, all.size - n)
+            lock.notifyAll()
+            all.copyOf(n)
+        }
+    }
+
+    private val sessions = java.util.concurrent.ConcurrentHashMap<String, Session>()
+
+    /** Whose session this is: droidtop itself, or the calling plugin. Another caller's token never finds it. */
+    private fun sessionKey(call: PluginCall): String? {
+        val token = call.args.optString("session")
+        if (!SESSION_TOKEN.matches(token)) return null
+        val owner = if (call.caller.optString("kind") == "host") "droidtop" else call.caller.optString("id").ifBlank { return null }
+        return "$owner/$token"
+    }
+
+    private fun execStream(call: PluginCall): PluginReply {
+        val key = sessionKey(call) ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "session must be a token of 8 to 64 letters, digits or dashes")
+        val array = call.args.optJSONArray("argv")
+        val argv = if (array == null) emptyList() else List(array.length()) { array.optString(it) }
+        if (argv.isEmpty() || argv.size > MAX_ARGS || argv.any { it.isEmpty() || it.length > MAX_ARG_LENGTH }) {
+            return PluginReply.error(PluginErrorCode.INVALID_ARGS, "argv must list 1 to $MAX_ARGS non-empty arguments")
+        }
+        notReady()?.let { return it }
+        levelRefusal(call)?.let { return it }
+        if (sessions.containsKey(key)) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "that session is already running")
+        val owner = key.substringBefore('/')
+        if (sessions.keys.count { it.startsWith("$owner/") } >= MAX_SESSIONS) {
+            return PluginReply.error(PluginErrorCode.RATE_LIMITED, "at most $MAX_SESSIONS commands may run at once")
+        }
+        val process = runCatching { newProcess(argv) }.getOrElse {
+            return PluginReply.error(PluginErrorCode.FAILED, "Shizuku could not start the command: ${it.message}")
+        }
+        sessions[key] = Session(process)
+        return PluginReply.ok(JSONObject().put("session", call.args.optString("session")))
+    }
+
+    private fun streamRead(call: PluginCall): PluginReply {
+        val key = sessionKey(call) ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "session is required")
+        val session = sessions[key] ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "no such session")
+        val waitMs = call.args.optLong("waitMs", 0L).coerceIn(0L, minOf(MAX_READ_WAIT_MS, budget(call)))
+        val max = call.args.optInt("maxBytes", MAX_READ_BYTES).coerceIn(1, MAX_READ_BYTES)
+        val until = System.currentTimeMillis() + waitMs
+        while (!session.out.hasData() && !session.err.hasData() && !(session.out.eof && session.err.eof) && System.currentTimeMillis() < until) {
+            Thread.sleep(READ_POLL_MS)
+        }
+        val stdout = session.out.take(max)
+        val stderr = session.err.take(max - stdout.size)
+        val out = JSONObject()
+            .put("stdout", java.util.Base64.getEncoder().encodeToString(stdout))
+            .put("stderr", java.util.Base64.getEncoder().encodeToString(stderr))
+        val drained = session.out.eof && session.err.eof && !session.out.hasData() && !session.err.hasData()
+        val exit = if (drained) RemoteProcessWait.exitWithin(session.process, EXIT_WAIT_MS) else null
+        if (exit != null) {
+            sessions.remove(key)
+            out.put("exited", true).put("exit", exit)
+        } else {
+            out.put("exited", false)
+        }
+        return PluginReply.ok(out)
+    }
+
+    private fun streamWrite(call: PluginCall): PluginReply {
+        val key = sessionKey(call) ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "session is required")
+        val session = sessions[key] ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "no such session")
+        val data = runCatching { java.util.Base64.getDecoder().decode(call.args.optString("data")) }.getOrElse {
+            return PluginReply.error(PluginErrorCode.INVALID_ARGS, "data must be base64")
+        }
+        if (data.size > MAX_WRITE_BYTES) return PluginReply.error(PluginErrorCode.INVALID_ARGS, "data is limited to $MAX_WRITE_BYTES bytes per call")
+        return try {
+            val stdin = session.process.outputStream
+            if (data.isNotEmpty()) {
+                stdin.write(data)
+                stdin.flush()
+            }
+            if (call.args.optBoolean("close")) stdin.close()
+            PluginReply.ok(JSONObject().put("written", data.size))
+        } catch (e: java.io.IOException) {
+            PluginReply.error(PluginErrorCode.FAILED, "the command no longer takes input: ${e.message}")
+        }
+    }
+
+    private fun streamKill(call: PluginCall): PluginReply {
+        val key = sessionKey(call) ?: return PluginReply.error(PluginErrorCode.INVALID_ARGS, "session is required")
+        val session = sessions.remove(key) ?: return PluginReply.ok(JSONObject().put("killed", false))
+        runCatching { session.process.destroy() }
+        return PluginReply.ok(JSONObject().put("killed", true))
+    }
+
+    override fun onUnload() {
+        sessions.values.forEach { runCatching { it.process.destroy() } }
+        sessions.clear()
+    }
+
+    /** The time this call may take: the deadline droidtop gave it, less a margin to answer in. */
+    private fun budget(call: PluginCall): Long = (call.deadlineMs - REPLY_MARGIN_MS).coerceAtLeast(MIN_BUDGET_MS)
+
+    private class Outcome(val exit: Int, val stdout: String, val stderr: String)
+
+    /**
+     * Runs [argv] through Shizuku, directly (never through a shell). Null when it does not finish within [timeoutMs].
+     * `Shizuku.newProcess` is private since Shizuku 13, so it is reached by reflection, the same way other apps do.
+     */
+    private fun run(argv: List<String>, timeoutMs: Long, stdin: java.io.File? = null): Outcome? {
+        val process = newProcess(argv)
+        val out = Capture(process.inputStream)
+        val err = Capture(process.errorStream)
+        out.start()
+        err.start()
+        return try {
+            // `pm install -S <size>` reads the APK from here; the output is read on its own threads meanwhile.
+            if (stdin != null) runCatching { stdin.inputStream().use { input -> process.outputStream.use { input.copyTo(it, 1 shl 16) } } }
+            val exit = RemoteProcessWait.exitWithin(process, timeoutMs)
+            if (exit == null) {
+                process.destroy()
+                null
+            } else {
+                out.join(STREAM_JOIN_MS)
+                err.join(STREAM_JOIN_MS)
+                Outcome(exit, out.text(), err.text())
+            }
+        } finally {
+            runCatching { process.destroy() }
+        }
+    }
+
+    /** Starts [argv] in Shizuku's server, directly. `Shizuku.newProcess` is private since Shizuku 13: reached by reflection. */
+    private fun newProcess(argv: List<String>): Process {
+        val method = Shizuku::class.java.getDeclaredMethod("newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
+        method.isAccessible = true
+        return method.invoke(null, argv.toTypedArray(), null, null) as Process
+    }
+
+    /** Reads one stream on its own thread so a full pipe never stalls the command, keeping the first [MAX_STREAM_CHARS] characters. */
+    private class Capture(private val stream: InputStream) : Thread() {
+        private val text = StringBuilder()
+
+        override fun run() {
+            val buffer = CharArray(4096)
+            runCatching {
+                stream.bufferedReader().use { reader ->
+                    while (true) {
+                        val n = reader.read(buffer)
+                        if (n < 0) break
+                        synchronized(text) { if (text.length < MAX_STREAM_CHARS) text.append(buffer, 0, minOf(n, MAX_STREAM_CHARS - text.length)) }
+                    }
+                }
+            }
+        }
+
+        fun text(): String = synchronized(text) { text.toString().trim() }
+    }
+
+    // ---- the surface for Shizuku itself --------------------------------
+
+    private fun currentState(): String {
+        if (!context.isAppInstalled(SHIZUKU_MANAGER_PACKAGE)) return STATE_NOT_INSTALLED
+        return if (context.hasShizukuAccess()) STATE_GRANTED else STATE_NOT_GRANTED
+    }
+
+    private fun statusText(state: String): String = when (state) {
+        STATE_NOT_INSTALLED -> "Not installed"
+        STATE_GRANTED -> if (reportLevel() == LEVEL_ROOT) "Running as root, allowed" else "Running, allowed"
+        else -> "Installed, not allowed"
+    }
+
+    private fun facetState(): ShizukuFacets.State = ShizukuFacets.stateOf(
+        installed = context.isAppInstalled(SHIZUKU_MANAGER_PACKAGE),
+        running = runCatching { Shizuku.pingBinder() }.getOrDefault(false),
+        allowed = context.hasShizukuAccess(),
+    )
+
+    /** The facets droidtop asked for, as JSON ([ShizukuFacets] decides which). */
+    private fun facets(target: String): JSONObject {
+        val state = facetState()
+        val list = JSONArray()
+        for (spec in ShizukuFacets.plan(target, state, root = state == ShizukuFacets.State.READY && reportLevel() == LEVEL_ROOT)) {
+            val facet = JSONObject().put("id", spec.id).put("kind", spec.kind).put("v", 1).put("targets", JSONArray().put(target))
+            if (spec.kind == "notice") {
+                facet.put("title", spec.label).put("tone", "caution")
+                spec.sub?.let { facet.put("sub", it) }
+            } else {
+                facet.put("label", spec.label)
+                spec.value?.let { facet.put("value", it) }
+                spec.sub?.let { facet.put("sub", it) }
+                spec.state?.let { facet.put("state", it) }
+                spec.tone?.let { facet.put("tone", it) }
+                spec.op?.let { facet.put("call", JSONObject().put("op", it)) }
+            }
+            list.put(facet)
+        }
+        return JSONObject().put("facets", list)
+    }
+
+    /** Open Shizuku: its own screen is where it is paired and started; nothing else can start it without root or ADB. */
+    private fun openShizuku(): PluginReply = when {
+        !context.isAppInstalled(SHIZUKU_MANAGER_PACKAGE) -> PluginReply.error(PluginErrorCode.FAILED, "Shizuku is not installed")
+        context.launchApp(SHIZUKU_MANAGER_PACKAGE) -> PluginReply.ok(JSONObject().put("message", "Start Shizuku there, then come back"))
+        else -> PluginReply.error(PluginErrorCode.FAILED, "Shizuku did not open")
+    }
+
+    /** Allow droidtop: Shizuku answers with its own dialog. */
+    private fun allowDroidtop(): PluginReply = when (facetState()) {
+        ShizukuFacets.State.NOT_INSTALLED -> PluginReply.error(PluginErrorCode.FAILED, "Shizuku is not installed")
+        ShizukuFacets.State.NOT_RUNNING -> PluginReply.error(PluginErrorCode.FAILED, "Shizuku is not running. Open it and start it first.")
+        ShizukuFacets.State.READY -> PluginReply.ok(JSONObject().put("message", "droidtop is already allowed"))
+        ShizukuFacets.State.NOT_ALLOWED -> {
+            runCatching { Shizuku.requestPermission(REQUEST_CODE) }
+            PluginReply.ok(JSONObject().put("message", "Shizuku is asking you to allow droidtop"))
+        }
+    }
+
+    /**
+     * [PluginCapability.APP_STATUS]: what droidtop's app status page shows about Shizuku. The page asks only for the
+     * state (and launches the app itself); starting Shizuku and allowing droidtop are facets now ([facets]), because
+     * the page never sent the start, open_setup and grant actions this used to answer (Droidtop/tracker#602).
+     */
+    private fun appStatus(args: PluginArgs): PluginResult {
+        val state = currentState()
+        // droidtop's app status page reads `installed` for its first row and shows every other key as
+        // "<Key>: <value>" (PluginAppStatus.screenFor), so the state goes out as a sentence: on the rig
+        // (2026-10-14) the machine value read "State: not_installed" under a wrong "Not installed".
+        // The page's first row already says "Not installed"; the sentence is added only when there is more to say.
+        val base = buildMap {
+            put("package", SHIZUKU_MANAGER_PACKAGE)
+            put("installed", (state != STATE_NOT_INSTALLED).toString())
+            if (state != STATE_NOT_INSTALLED) put("status", statusText(state))
+        }
+        return when (val action = args.string("action")) {
+            null, "", "status" -> PluginResult.success(base)
+            else -> PluginResult.failure("unknown action \"$action\"")
+        }
+    }
+
+    companion object {
+        const val SHIZUKU_MANAGER_PACKAGE = "moe.shizuku.privileged.api"
+        const val STATE_NOT_INSTALLED = "not_installed"
+        const val STATE_NOT_GRANTED = "installed_not_granted"
+        const val STATE_GRANTED = "granted"
+        private const val REQUEST_CODE = 1
+
+        private const val MAX_SESSIONS = 8
+        private const val MAX_UNREAD_BYTES = 1024 * 1024
+        private const val MAX_READ_BYTES = 64 * 1024
+        private const val MAX_WRITE_BYTES = 64 * 1024
+        private const val MAX_READ_WAIT_MS = 5_000L
+        private const val READ_POLL_MS = 25L
+        private const val EXIT_WAIT_MS = 200L
+        private val SESSION_TOKEN = Regex("^[A-Za-z0-9-]{8,64}\$")
+
+        private const val ROOT_UID = 0
+        private const val LEVEL_NONE = "none"
+        private const val LEVEL_ADB = "adb"
+        private const val LEVEL_ROOT = "root"
+
+        private const val MAX_ARGS = 64
+        private const val MAX_ARG_LENGTH = 4096
+        private const val MAX_STREAM_CHARS = 64 * 1024
+        private const val STREAM_JOIN_MS = 500L
+        private const val STOP_TIMEOUT_MS = 8_000L
+        /** An install is a job (docs/plugin-api.md 2.7): a large APK takes minutes, inside the broker's 30-minute ceiling. */
+        private const val INSTALL_TIMEOUT_MS = 20L * 60 * 1000
+        private const val DEFAULT_EXEC_TIMEOUT_MS = 10_000L
+        private const val MAX_EXEC_TIMEOUT_MS = 60_000L
+        private const val REPLY_MARGIN_MS = 500L
+        private const val MIN_BUDGET_MS = 1_000L
+
+        private const val FILE_PIECE_BYTES = 262144
+        private const val MAX_WRITE_FILE_BYTES = 64L * 1024 * 1024
+        private const val MAX_PATH_CHARS = 1024
+        private const val FILE_TIMEOUT_MS = 30_000L
+    }
+}
