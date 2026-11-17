@@ -7,5 +7,5 @@ GPL-3.0, so the combined work is distributed under GPL-3.0. The upstream licence
 unchanged in LICENSE.Apache-2.0, and every upstream copyright and licence notice in the source files
 stays as it is. The submodule api/ (RikkaApps/Shizuku-API) keeps its own licence.
 
-The droidtop plugin in droidtop-plugin/ is our own code, Copyright the droidtop contributors,
+The droidtop plugin (src/, test/, build.sh, sign.sh, sign_jws.py, prepare.sh and manifest.template.json) is our own code, Copyright the droidtop contributors,
 GPL-3.0.

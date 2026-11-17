@@ -4,7 +4,8 @@ on:
   push:
     branches: [plugin-core]
     paths:
-      - 'droidtop-plugin/**'
+      - 'src/**'
+      - 'test/**'
       - '.github/workflows/plugin-tests.yml'
   workflow_dispatch: {}
 
@@ -26,22 +27,18 @@ jobs:
           unzip -q "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
       - name: RemoteProcessWait
-        working-directory: droidtop-plugin
         run: |
           kotlinc src/dev/droidtop/plugins/shizuku/RemoteProcessWait.kt test/RemoteProcessWaitTest.kt -include-runtime -d "$RUNNER_TEMP/test.jar"
           java -cp "$RUNNER_TEMP/test.jar" RemoteProcessWaitTestKt
       - name: PackageRequests
-        working-directory: droidtop-plugin
         run: |
           kotlinc src/dev/droidtop/plugins/shizuku/PackageRequests.kt test/PackageRequestsTest.kt -include-runtime -d "$RUNNER_TEMP/packages.jar"
           java -cp "$RUNNER_TEMP/packages.jar" PackageRequestsTestKt
       - name: SettingsRequests
-        working-directory: droidtop-plugin
         run: |
           kotlinc src/dev/droidtop/plugins/shizuku/PackageRequests.kt src/dev/droidtop/plugins/shizuku/SettingsRequests.kt test/SettingsRequestsTest.kt -include-runtime -d "$RUNNER_TEMP/settings.jar"
           java -cp "$RUNNER_TEMP/settings.jar" SettingsRequestsTestKt
       - name: ShizukuFacets
-        working-directory: droidtop-plugin
         run: |
           kotlinc src/dev/droidtop/plugins/shizuku/ShizukuFacets.kt test/ShizukuFacetsTest.kt -include-runtime -d "$RUNNER_TEMP/facets.jar"
           java -cp "$RUNNER_TEMP/facets.jar" ShizukuFacetsTestKt

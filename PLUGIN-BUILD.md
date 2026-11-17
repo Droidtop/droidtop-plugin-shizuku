@@ -1,4 +1,4 @@
-# droidtop-plugin/
+# The droidtop plugin: building and signing
 
 The droidtop `native_bundle` plugin built from this repo (see `PLUGIN-PLAN.md`):
 Shizuku for droidtop. Installed through droidtop's Settings > Accounts and
