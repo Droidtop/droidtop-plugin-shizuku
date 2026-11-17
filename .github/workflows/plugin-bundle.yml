@@ -10,7 +10,13 @@ on:
     branches: [plugin-core]
     tags: ['plugin-v*']
     paths:
-      - 'droidtop-plugin/**'
+      - 'build.sh'
+      - 'manifest.template.json'
+      - 'prepare.sh'
+      - 'sign.sh'
+      - 'sign_jws.py'
+      - 'src/**'
+      - 'test/**'
       - '.github/workflows/plugin-bundle.yml'
   workflow_dispatch: {}
 
@@ -23,7 +29,7 @@ jobs:
       contents: write
     uses: Droidtop/droidtop-platforms/.github/workflows/droidtop-plugin-bundle.yml@1efbb7df7626174a7146e767dda52bb1a9b6cc98
     with:
-      plugin-dir: droidtop-plugin
+      plugin-dir: .
       artifact-name: plugin-bundle
       prepare-script: prepare.sh
     secrets:

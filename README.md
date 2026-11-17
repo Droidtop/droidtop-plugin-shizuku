@@ -24,7 +24,7 @@
   <a href="#upstream-readme">Upstream README</a>
 </p>
 
-This is a fork of [Shizuku](https://github.com/RikkaApps/Shizuku) with a [droidtop](https://github.com/Droidtop/droidtop) plugin added in `droidtop-plugin/`. droidtop never starts or bundles Shizuku's server. It talks to the Shizuku app you already installed.
+This is a fork of [Shizuku](https://github.com/RikkaApps/Shizuku) with a [droidtop](https://github.com/Droidtop/droidtop) plugin added beside it: `src/`, `build.sh`, `sign.sh` and `manifest.template.json` (how they build: `PLUGIN-BUILD.md`). droidtop never starts or bundles Shizuku's server. It talks to the Shizuku app you already installed.
 
 ## What the droidtop plugin does
 
@@ -49,7 +49,7 @@ You can also browse the catalog at [droidtop.github.io](https://droidtop.github.
 
 ## Status
 
-Released as `plugin-v1.4.0`, and listed in droidtop's official catalog. The code is in `droidtop-plugin/`, and the plan it follows is in `PLUGIN-PLAN.md`.
+Released as `plugin-v1.4.0`, and listed in droidtop's official catalog. The code is in `src/`, and the plan it follows is in `PLUGIN-PLAN.md`.
 
 ## Licence
 
@@ -155,7 +155,7 @@ Under Apache 2.0 section 6, specifically:
 This repo mirrors upstream [RikkaApps/Shizuku](https://github.com/RikkaApps/Shizuku)
 for droidtop plugin work (see `PLUGIN-PLAN.md`). It is an official droidtop
 plugin fork, kept in sync with upstream, not a place for droidtop's own
-patches beyond the `droidtop-plugin/` wrapper.
+patches beyond the plugin wrapper.
 
 Branches:
 - `upstream-main` tracks upstream's `master` exactly (fast-forward only,
@@ -177,7 +177,7 @@ share changes.
 The owner, 2026-11-05: "ALL plugins should keep the recipe on plugin-core, overlaid onto the release branch when
 needed. That's our standard operation." This repository is a fork, so it has three kinds of branch:
 
-- **`plugin-core`** (the default branch) holds only the droidtop plugin's own recipe: `droidtop-plugin/`, this
+- **`plugin-core`** (the default branch) holds only the droidtop plugin's own recipe: `src/`, the build and signing scripts, this
   README, the workflows, the docs and the line declaration in `plugin-line/lines/stable/line.json`. Every change
   lands here first, through a `ci/` branch. The plugin bundle is built from here.
 - **`upstream-sync`** is the upstream project, untouched. It only ever fast-forwards to the upstream
